@@ -2,18 +2,33 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import sqlite3
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+import httpx
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.agent import sales_agent
+from app.channels.base import InboundMessage
+from app.channels.meta import MetaMessengerAdapter
+from app.channels.web import WebChannelAdapter
 from app.config import BASE_DIR, settings
 from app.database import init_database
+from app.inbox import inbox_service
 from app.repository import repository
-from app.schemas import ChatRequest, ChatResponse, ProductCreate, ShopCreate
+from app.schemas import (
+    BotControlRequest,
+    ChatRequest,
+    ChatResponse,
+    ProductCreate,
+    HumanReplyRequest,
+    ShopCreate,
+    WebChannelMessage,
+)
 from app.seed import seed_demo_data
 
 
@@ -21,6 +36,13 @@ from app.seed import seed_demo_data
 async def lifespan(_: FastAPI):
     init_database()
     seed_demo_data()
+    if settings.meta_page_id:
+        shop = repository.get_shop(settings.meta_shop_slug)
+        if shop:
+            repository.upsert_channel_connection(
+                shop["id"], "messenger", settings.meta_page_id,
+                f"Facebook Page {settings.meta_page_id}",
+            )
     yield
 
 
@@ -47,6 +69,10 @@ def health() -> dict:
         "version": settings.app_version,
         "llm_configured": bool(settings.groq_api_key),
         "model": settings.groq_model if settings.groq_api_key else "rule-fallback",
+        "channels": {
+            "web": True,
+            "messenger": MetaMessengerAdapter().configured,
+        },
     }
 
 
@@ -134,6 +160,120 @@ async def import_products(slug: str, file: UploadFile = File(...)) -> dict:
 async def chat(slug: str, payload: ChatRequest) -> dict:
     shop = require_shop(slug)
     return await sales_agent.respond(shop, payload.message.strip(), payload.conversation_id)
+
+
+@app.post("/api/channels/web/{slug}/messages")
+async def web_channel_message(slug: str, payload: WebChannelMessage) -> dict:
+    shop = require_shop(slug)
+    external_conversation_id = payload.conversation_id or str(uuid4())
+    customer_id = payload.customer_id or f"web:{external_conversation_id}"
+    inbound = InboundMessage(
+        channel="web",
+        external_event_id=str(uuid4()),
+        external_conversation_id=external_conversation_id,
+        external_customer_id=customer_id,
+        customer_name=payload.customer_name,
+        text=payload.message.strip(),
+        metadata={"source": "website-widget"},
+    )
+    result = await inbox_service.process(shop, inbound, WebChannelAdapter())
+    result["conversation_id"] = external_conversation_id
+    return result
+
+
+@app.get("/api/channels/web/{slug}/conversations/{external_id}/messages")
+def web_channel_history(slug: str, external_id: str) -> list[dict]:
+    shop = require_shop(slug)
+    conversation = repository.get_channel_conversation_by_external(
+        shop["id"], "web", external_id
+    )
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    return repository.list_channel_messages(conversation["id"])
+
+
+@app.get("/api/webhooks/meta", response_class=PlainTextResponse)
+def verify_meta_webhook(request: Request) -> PlainTextResponse:
+    adapter = MetaMessengerAdapter()
+    params = request.query_params
+    if not adapter.verify_challenge(params.get("hub.mode"), params.get("hub.verify_token")):
+        raise HTTPException(status_code=403, detail="Meta webhook verification failed.")
+    return PlainTextResponse(params.get("hub.challenge", ""))
+
+
+@app.post("/api/webhooks/meta")
+async def receive_meta_webhook(request: Request, background_tasks: BackgroundTasks) -> dict:
+    body = await request.body()
+    adapter = MetaMessengerAdapter()
+    if not adapter.configured:
+        raise HTTPException(status_code=503, detail="Kênh Messenger chưa được cấu hình.")
+    if not adapter.verify_signature(body, request.headers.get("X-Hub-Signature-256")):
+        raise HTTPException(status_code=401, detail="Chữ ký webhook không hợp lệ.")
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Webhook JSON không hợp lệ.") from exc
+    shop = require_shop(settings.meta_shop_slug)
+    connection = repository.upsert_channel_connection(
+        shop["id"], "messenger", settings.meta_page_id or "unknown-page",
+        f"Facebook Page {settings.meta_page_id}",
+    )
+    events = adapter.parse_events(payload)
+    for event in events:
+        background_tasks.add_task(
+            inbox_service.process, shop, event, adapter, connection["id"]
+        )
+    return {"status": "accepted", "events": len(events)}
+
+
+@app.get("/api/shops/{slug}/inbox/conversations")
+def list_inbox_conversations(slug: str) -> list[dict]:
+    shop = require_shop(slug)
+    return repository.list_channel_conversations(shop["id"])
+
+
+def require_channel_conversation(slug: str, conversation_id: str) -> tuple[dict, dict]:
+    shop = require_shop(slug)
+    conversation = repository.get_channel_conversation(conversation_id)
+    if not conversation or conversation["shop_id"] != shop["id"]:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    return shop, conversation
+
+
+@app.get("/api/shops/{slug}/inbox/conversations/{conversation_id}/messages")
+def list_inbox_messages(slug: str, conversation_id: str) -> list[dict]:
+    require_channel_conversation(slug, conversation_id)
+    return repository.list_channel_messages(conversation_id)
+
+
+@app.post("/api/shops/{slug}/inbox/conversations/{conversation_id}/bot")
+def control_inbox_bot(slug: str, conversation_id: str, payload: BotControlRequest) -> dict:
+    require_channel_conversation(slug, conversation_id)
+    updated = repository.set_channel_bot(
+        conversation_id, payload.enabled, payload.assigned_to
+    )
+    return updated or {}
+
+
+@app.post("/api/shops/{slug}/inbox/conversations/{conversation_id}/messages", status_code=201)
+async def send_inbox_reply(
+    slug: str, conversation_id: str, payload: HumanReplyRequest
+) -> dict:
+    _, conversation = require_channel_conversation(slug, conversation_id)
+    if conversation["channel"] == "messenger":
+        adapter = MetaMessengerAdapter()
+        if not adapter.configured:
+            raise HTTPException(status_code=503, detail="Kênh Messenger chưa được cấu hình.")
+    elif conversation["channel"] == "web":
+        adapter = WebChannelAdapter()
+    else:
+        raise HTTPException(status_code=400, detail="Kênh chưa hỗ trợ gửi tin.")
+    try:
+        return await inbox_service.reply_as_human(
+            conversation, payload.message.strip(), payload.agent_name, adapter
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Nền tảng từ chối gửi tin nhắn.") from exc
 
 
 @app.get("/api/conversations/{conversation_id}/trace")

@@ -93,9 +93,71 @@ CREATE TABLE IF NOT EXISTS handoffs (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS channel_connections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    external_account_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    config_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(shop_id, channel, external_account_id)
+);
+
+CREATE TABLE IF NOT EXISTS channel_conversations (
+    id TEXT PRIMARY KEY,
+    shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    connection_id INTEGER REFERENCES channel_connections(id) ON DELETE SET NULL,
+    channel TEXT NOT NULL,
+    external_conversation_id TEXT NOT NULL,
+    external_customer_id TEXT NOT NULL,
+    customer_name TEXT,
+    internal_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    bot_enabled INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'open',
+    assigned_to TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    last_message_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(channel, external_conversation_id)
+);
+
+CREATE TABLE IF NOT EXISTS channel_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_conversation_id TEXT NOT NULL REFERENCES channel_conversations(id) ON DELETE CASCADE,
+    external_message_id TEXT,
+    direction TEXT NOT NULL,
+    sender_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'received',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    UNIQUE(channel_conversation_id, external_message_id)
+);
+
+CREATE TABLE IF NOT EXISTS channel_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    external_event_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'received',
+    error_text TEXT,
+    received_at TEXT NOT NULL,
+    processed_at TEXT,
+    UNIQUE(channel, external_event_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_conversation ON tool_calls(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_channel_conversations_shop ON channel_conversations(shop_id, last_message_at);
+CREATE INDEX IF NOT EXISTS idx_channel_messages_conversation ON channel_messages(channel_conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_channel_events_status ON channel_events(status, received_at);
 """
 
 

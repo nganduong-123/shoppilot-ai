@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
+from uuid import uuid4
 
 from app.database import db_session, json_dumps, json_loads, row_to_dict, utc_now
 
@@ -265,6 +267,264 @@ class Repository:
             100 * (conversations - data["handoffs"]) / conversations, 1
         ) if conversations else 100.0
         return data
+
+    def upsert_channel_connection(
+        self,
+        shop_id: int,
+        channel: str,
+        external_account_id: str,
+        display_name: str,
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        with db_session() as connection:
+            connection.execute(
+                """
+                INSERT INTO channel_connections
+                    (shop_id, channel, external_account_id, display_name, config_json,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(shop_id, channel, external_account_id) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    config_json = excluded.config_json,
+                    status = 'active',
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    shop_id, channel, external_account_id, display_name,
+                    json_dumps(config or {}), now, now,
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM channel_connections
+                WHERE shop_id = ? AND channel = ? AND external_account_id = ?
+                """,
+                (shop_id, channel, external_account_id),
+            ).fetchone()
+            result = dict(row)
+            result["config"] = json_loads(result.pop("config_json"))
+            return result
+
+    def record_channel_event(
+        self,
+        shop_id: int,
+        channel: str,
+        external_event_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> bool:
+        try:
+            with db_session() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO channel_events
+                        (shop_id, channel, external_event_id, event_type, payload_json,
+                         status, received_at)
+                    VALUES (?, ?, ?, ?, ?, 'received', ?)
+                    """,
+                    (
+                        shop_id, channel, external_event_id, event_type,
+                        json_dumps(payload), utc_now(),
+                    ),
+                )
+            return True
+        except sqlite3.IntegrityError as exc:
+            # A repeated platform webhook must not create a second reply.
+            if "UNIQUE constraint failed" in str(exc):
+                return False
+            raise
+
+    def mark_channel_event(
+        self, channel: str, external_event_id: str, status: str, error: str | None = None
+    ) -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                UPDATE channel_events
+                SET status = ?, error_text = ?, processed_at = ?
+                WHERE channel = ? AND external_event_id = ?
+                """,
+                (status, error, utc_now(), channel, external_event_id),
+            )
+
+    def get_or_create_channel_conversation(
+        self,
+        *,
+        shop_id: int,
+        connection_id: int | None,
+        channel: str,
+        external_conversation_id: str,
+        external_customer_id: str,
+        customer_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM channel_conversations
+                WHERE shop_id = ? AND channel = ? AND external_conversation_id = ?
+                """,
+                (shop_id, channel, external_conversation_id),
+            ).fetchone()
+            if not row:
+                internal_id = str(uuid4())
+                channel_id = str(uuid4())
+                connection.execute(
+                    """
+                    INSERT INTO conversations
+                        (id, shop_id, customer_name, status, context_json, created_at, updated_at)
+                    VALUES (?, ?, ?, 'active', '{}', ?, ?)
+                    """,
+                    (internal_id, shop_id, customer_name, now, now),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO channel_conversations
+                        (id, shop_id, connection_id, channel, external_conversation_id,
+                         external_customer_id, customer_name, internal_conversation_id,
+                         metadata_json, last_message_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        channel_id, shop_id, connection_id, channel,
+                        external_conversation_id, external_customer_id, customer_name,
+                        internal_id, json_dumps(metadata or {}), now, now, now,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM channel_conversations WHERE id = ?", (channel_id,)
+                ).fetchone()
+            result = dict(row)
+            result["bot_enabled"] = bool(result["bot_enabled"])
+            result["metadata"] = json_loads(result.pop("metadata_json"))
+            return result
+
+    def add_channel_message(
+        self,
+        channel_conversation_id: str,
+        *,
+        external_message_id: str | None,
+        direction: str,
+        sender_type: str,
+        content: str,
+        status: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        with db_session() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO channel_messages
+                    (channel_conversation_id, external_message_id, direction, sender_type,
+                     content, status, metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    channel_conversation_id, external_message_id, direction, sender_type,
+                    content, status, json_dumps(metadata or {}), now,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE channel_conversations
+                SET last_message_at = ?, updated_at = ? WHERE id = ?
+                """,
+                (now, now, channel_conversation_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM channel_messages WHERE id = ?", (cursor.lastrowid,)
+            ).fetchone()
+            result = dict(row)
+            result["metadata"] = json_loads(result.pop("metadata_json"))
+            return result
+
+    def list_channel_conversations(self, shop_id: int, limit: int = 100) -> list[dict[str, Any]]:
+        with db_session() as connection:
+            rows = connection.execute(
+                """
+                SELECT cc.*,
+                       (SELECT content FROM channel_messages cm
+                        WHERE cm.channel_conversation_id = cc.id
+                        ORDER BY cm.id DESC LIMIT 1) AS last_message,
+                       (SELECT COUNT(*) FROM channel_messages cm
+                        WHERE cm.channel_conversation_id = cc.id
+                          AND cm.direction = 'inbound' AND cm.status = 'received') AS unread_count
+                FROM channel_conversations cc
+                WHERE cc.shop_id = ?
+                ORDER BY cc.last_message_at DESC LIMIT ?
+                """,
+                (shop_id, limit),
+            ).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["bot_enabled"] = bool(item["bot_enabled"])
+                item["metadata"] = json_loads(item.pop("metadata_json"))
+                result.append(item)
+            return result
+
+    def get_channel_conversation(self, conversation_id: str) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                "SELECT * FROM channel_conversations WHERE id = ?", (conversation_id,)
+            ).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["bot_enabled"] = bool(result["bot_enabled"])
+            result["metadata"] = json_loads(result.pop("metadata_json"))
+            return result
+
+    def get_channel_conversation_by_external(
+        self, shop_id: int, channel: str, external_conversation_id: str
+    ) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM channel_conversations
+                WHERE shop_id = ? AND channel = ? AND external_conversation_id = ?
+                """,
+                (shop_id, channel, external_conversation_id),
+            ).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["bot_enabled"] = bool(result["bot_enabled"])
+            result["metadata"] = json_loads(result.pop("metadata_json"))
+            return result
+
+    def list_channel_messages(self, conversation_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        with db_session() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM (
+                    SELECT * FROM channel_messages WHERE channel_conversation_id = ?
+                    ORDER BY id DESC LIMIT ?
+                ) ORDER BY id
+                """,
+                (conversation_id, limit),
+            ).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["metadata"] = json_loads(item.pop("metadata_json"))
+                result.append(item)
+            return result
+
+    def set_channel_bot(
+        self, conversation_id: str, enabled: bool, assigned_to: str | None
+    ) -> dict[str, Any] | None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                UPDATE channel_conversations
+                SET bot_enabled = ?, assigned_to = ?, updated_at = ? WHERE id = ?
+                """,
+                (int(enabled), assigned_to, utc_now(), conversation_id),
+            )
+        return self.get_channel_conversation(conversation_id)
 
 
 repository = Repository()

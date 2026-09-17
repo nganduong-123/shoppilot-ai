@@ -4,8 +4,10 @@
 
 ```mermaid
 flowchart LR
-    U[Khách hàng] --> UI[Web chat]
-    UI --> API[FastAPI]
+    U[Khách hàng] --> C[Website / Messenger]
+    C --> AD[Channel adapters]
+    AD --> IB[Unified inbox]
+    IB --> API[FastAPI]
     API --> TR[Tenant resolver]
     TR --> AG[Sales agent loop]
     AG --> LLM[Groq LLM]
@@ -29,7 +31,20 @@ flowchart LR
 | `repository.py` | Đọc/ghi dữ liệu, luôn giới hạn theo `shop_id` |
 | `database.py` | Schema SQLite, transaction và foreign key |
 | `main.py` | HTTP API, validation và phục vụ giao diện |
+| `channels/` | Chuẩn hóa webhook từng nền tảng và gửi phản hồi |
+| `inbox.py` | Chống sự kiện trùng, lưu hội thoại, điều phối AI/người thật |
 | `static/` | Console chat, catalog, metrics và live trace |
+
+## Luồng omnichannel
+
+1. Adapter xác thực webhook của nền tảng và chuyển dữ liệu về `InboundMessage` chung.
+2. `channel_events` dùng ID từ nền tảng để không trả lời hai lần khi webhook được gửi lại.
+3. `channel_conversations` ánh xạ hội thoại bên ngoài vào hội thoại nội bộ của agent.
+4. Khi `bot_enabled=true`, agent xử lý rồi adapter gửi kết quả về đúng kênh.
+5. Khi nhân viên tắt AI, tin mới vẫn được lưu nhưng không tự trả lời; toàn bộ ngữ cảnh được giữ để nhân viên tiếp quản.
+6. Website trả lời trực tiếp qua HTTP. Messenger được tiếp nhận nhanh và xử lý trong background task.
+
+Background task trong tiến trình phù hợp cho bản demo. Bản production cần hàng đợi bền vững như Redis/Celery để không mất sự kiện khi máy chủ khởi động lại.
 
 ## Multi-tenant
 
