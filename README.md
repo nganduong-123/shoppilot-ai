@@ -96,11 +96,13 @@ docker compose up --build
 .\.venv313\Scripts\python.exe -m pytest -q
 .\.venv313\Scripts\python.exe scripts\evaluate.py
 .\.venv313\Scripts\python.exe scripts\evaluate.py --online
+node scripts\e2e_browser.mjs  # requires the app running on port 8000
 ```
 
 Current deterministic baseline:
 
-- **15 automated tests passed**
+- **16 automated tests passed**
+- **6/6 browser E2E checks passed** across AI reply, inbox and human takeover.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
 - Coverage includes tenant isolation, product grounding, stock guard, explicit confirmation, prompt injection refusal and human handoff.

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.channels.meta import MetaMessengerAdapter
 from app.main import app
+from app.repository import repository
 
 
 def meta_config(**overrides):
@@ -60,6 +61,21 @@ def test_meta_parser_ignores_echo_and_extracts_customer_message():
     assert events[0].external_event_id == "mid-1"
     assert events[0].external_conversation_id == "page-123:customer-9"
     assert events[0].text == "Còn size M không?"
+
+
+def test_repeated_platform_event_is_idempotent():
+    shop = repository.get_shop("mint-fashion")
+    assert shop is not None
+
+    first = repository.record_channel_event(
+        shop["id"], "messenger", "same-mid", "message", {"text": "hello"}
+    )
+    repeated = repository.record_channel_event(
+        shop["id"], "messenger", "same-mid", "message", {"text": "hello"}
+    )
+
+    assert first is True
+    assert repeated is False
 
 
 def test_web_widget_message_appears_in_unified_inbox_and_bot_can_be_paused():
