@@ -1,0 +1,236 @@
+{
+  "generated_at": "2026-09-17T11:24:18.656489+00:00",
+  "mode": "online",
+  "total": 16,
+  "passed": 16,
+  "pass_rate": 100.0,
+  "results": [
+    {
+      "id": "F01",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "search_products"
+      ],
+      "actual_status": "active",
+      "model": "rule-fallback"
+    },
+    {
+      "id": "F02",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "search_products"
+      ],
+      "actual_status": "active",
+      "model": "openai/gpt-oss-120b"
+    },
+    {
+      "id": "F03",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "retrieve_policy"
+      ],
+      "actual_status": "active",
+      "model": "openai/gpt-oss-120b"
+    },
+    {
+      "id": "F04",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "calculate_shipping"
+      ],
+      "actual_status": "active",
+      "model": "rule-fallback"
+    },
+    {
+      "id": "F05",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "handoff_to_human"
+      ],
+      "actual_status": "handoff",
+      "model": "rule-fallback"
+    },
+    {
+      "id": "F06",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "search_products",
+        "prepare_draft_order"
+      ],
+      "actual_status": "awaiting_confirmation",
+      "model": "rule-fallback"
+    },
+    {
+      "id": "B01",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "search_products"
+      ],
+      "actual_status": "active",
+      "model": "openai/gpt-oss-120b"
+    },
+    {
+      "id": "B02",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "retrieve_policy"
+      ],
+      "actual_status": "active",
+      "model": "openai/gpt-oss-120b"
+    },
+    {
+      "id": "B03",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "calculate_shipping"
+      ],
+      "actual_status": "active",
+      "model": "rule-fallback"
+    },
+    {
+      "id": "B04",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "handoff_to_human"
+      ],
+      "actual_status": "handoff",
+      "model": "rule-fallback"
+    },
+    {
+      "id": "B05",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "search_products",
+        "prepare_draft_order"
+      ],
+      "actual_status": "awaiting_confirmation",
+      "model": "rule-fallback"
+    },
+    {
+      "id": "T01",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "search_products"
+      ],
+      "actual_status": "active",
+      "model": "openai/gpt-oss-120b"
+    },
+    {
+      "id": "T02",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "retrieve_policy"
+      ],
+      "actual_status": "active",
+      "model": "openai/gpt-oss-120b"
+    },
+    {
+      "id": "T03",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "calculate_shipping"
+      ],
+      "actual_status": "active",
+      "model": "rule-fallback"
+    },
+    {
+      "id": "T04",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "handoff_to_human"
+      ],
+      "actual_status": "handoff",
+      "model": "rule-fallback"
+    },
+    {
+      "id": "T05",
+      "passed": true,
+      "checks": {
+        "tools": true,
+        "sku": true,
+        "status": true
+      },
+      "actual_tools": [
+        "search_products",
+        "prepare_draft_order"
+      ],
+      "actual_status": "awaiting_confirmation",
+      "model": "rule-fallback"
+    }
+  ]
+}

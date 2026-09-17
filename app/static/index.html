@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ShopPilot AI — nền tảng AI Sales Agent đa cửa hàng">
+  <title>ShopPilot AI · Commerce Agent Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48"><path d="M11 15.5 24 8l13 7.5v17L24 40l-13-7.5z"/><path class="brand-line" d="m17 24 5 5 10-11"/></svg>
+        </div>
+        <div><strong>ShopPilot</strong><span>Commerce AI</span></div>
+      </div>
+
+      <div class="workspace-label">WORKSPACE</div>
+      <button class="shop-switcher" id="shop-switcher" type="button">
+        <span class="shop-avatar" id="shop-avatar">MF</span>
+        <span class="shop-switch-copy"><strong id="shop-name">Đang tải...</strong><small id="shop-category">Workspace</small></span>
+        <svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>
+      </button>
+      <div class="shop-menu" id="shop-menu" hidden></div>
+
+      <nav class="nav-list" aria-label="Điều hướng chính">
+        <button class="nav-item active" data-view="inbox">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg></span>
+          Agent playground <span class="pulse-dot"></span>
+        </button>
+        <button class="nav-item" data-view="catalog">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg></span>
+          Catalog <span class="nav-count" id="catalog-count">0</span>
+        </button>
+        <button class="nav-item" data-view="observability">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg></span>
+          Traces & metrics
+        </button>
+      </nav>
+
+      <div class="sidebar-note">
+        <span class="note-icon">✦</span>
+        <strong>Human-in-the-loop</strong>
+        <p>Mọi đơn hàng đều cần khách xác nhận trước khi hoàn tất.</p>
+      </div>
+      <div class="profile-row">
+        <span class="profile-avatar">DN</span>
+        <div><strong>Dương Thị Ngân</strong><small>Workspace owner</small></div>
+        <span class="online"></span>
+      </div>
+    </aside>
+
+    <main class="main-panel">
+      <header class="topbar">
+        <div><p class="eyebrow" id="view-eyebrow">AGENT PLAYGROUND</p><h1 id="view-title">Kiểm thử trợ lý bán hàng</h1></div>
+        <div class="topbar-actions">
+          <span class="health-pill"><i></i><span id="model-name">Đang kiểm tra model</span></span>
+          <a class="icon-button" href="/docs" target="_blank" aria-label="Mở API docs" title="API docs">
+            <svg viewBox="0 0 24 24"><path d="M14 3h7v7m0-7L10 14M5 5h5M5 5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/></svg>
+          </a>
+        </div>
+      </header>
+
+      <section class="view active" id="view-inbox">
+        <div class="metric-strip">
+          <article><span>Cuộc hội thoại</span><strong id="metric-conversations">0</strong><small>trong workspace</small></article>
+          <article><span>Tự động xử lý</span><strong id="metric-automation">100%</strong><small>không cần chuyển người</small></article>
+          <article><span>Đơn xác nhận</span><strong id="metric-orders">0</strong><small>có human confirmation</small></article>
+          <article><span>Tool calls</span><strong id="metric-tools">0</strong><small>đã ghi trace</small></article>
+        </div>
+
+        <div class="playground-grid">
+          <section class="chat-card">
+            <div class="chat-head">
+              <div class="agent-identity"><span class="agent-orb"></span><div><strong>ShopPilot Agent</strong><small><span class="status-dot"></span> Sẵn sàng hỗ trợ</small></div></div>
+              <button class="text-button" id="new-chat" type="button">+ Hội thoại mới</button>
+            </div>
+            <div class="messages" id="messages" aria-live="polite"></div>
+            <div class="quick-replies" id="quick-replies"></div>
+            <form class="composer" id="chat-form">
+              <textarea id="chat-input" rows="1" maxlength="2000" placeholder="Nhắn nhu cầu của khách..." aria-label="Tin nhắn"></textarea>
+              <button class="send-button" type="submit" aria-label="Gửi tin nhắn"><svg viewBox="0 0 24 24"><path d="m4 4 16 8-16 8 3-8zM7 12h13"/></svg></button>
+            </form>
+            <div class="composer-foot"><span>Enter để gửi · Shift + Enter xuống dòng</span><span id="char-count">0 / 2000</span></div>
+          </section>
+
+          <aside class="inspector-card">
+            <div class="inspector-head"><div><p class="eyebrow">LIVE TRACE</p><h2>Agent activity</h2></div><span class="live-badge">LIVE</span></div>
+            <div class="trace-empty" id="trace-empty">
+              <span class="trace-illustration"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="21"/><path d="M32 19v13l9 6"/></svg></span>
+              <strong>Chưa có hoạt động</strong><p>Tool calls và quyết định của agent sẽ xuất hiện tại đây.</p>
+            </div>
+            <div class="trace-list" id="trace-list"></div>
+            <div class="guardrail-card"><span class="shield">✓</span><div><strong>Confirmation guardrail</strong><p>Write action bị chặn đến khi khách xác nhận.</p></div></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-catalog">
+        <div class="section-toolbar">
+          <div><p class="section-kicker">DỮ LIỆU SHOP</p><h2>Catalog sản phẩm</h2><p>Dữ liệu được cô lập theo từng workspace.</p></div>
+          <label class="upload-button">Nhập CSV<input id="csv-input" type="file" accept=".csv" hidden></label>
+        </div>
+        <div class="catalog-grid" id="catalog-grid"></div>
+      </section>
+
+      <section class="view" id="view-observability">
+        <div class="observability-hero">
+          <div><p class="section-kicker">OBSERVABILITY</p><h2>Mọi quyết định đều có thể kiểm tra</h2><p>Đọc lại hội thoại, tool arguments, kết quả và thời gian xử lý.</p></div>
+          <span class="audit-badge">AUDIT READY</span>
+        </div>
+        <div class="metric-strip large">
+          <article><span>Doanh thu demo</span><strong id="metric-revenue">0đ</strong><small>từ đơn đã xác nhận</small></article>
+          <article><span>Handoff</span><strong id="metric-handoffs">0</strong><small>chuyển đúng lúc</small></article>
+          <article><span>Sản phẩm</span><strong id="metric-products">0</strong><small>trong catalog hiện tại</small></article>
+        </div>
+        <div class="trace-table-card">
+          <div class="table-head"><div><strong>Trace gần nhất</strong><small id="trace-conversation-id">Chưa có conversation</small></div><button id="refresh-trace" class="text-button">Làm mới</button></div>
+          <div id="full-trace" class="full-trace"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+[
+  {"id":"F01","shop":"mint-fashion","message":"Tìm áo sơ mi trắng size M dưới 500k","expected_tools":["search_products"],"expected_sku":"MF-SM01"},
+  {"id":"F02","shop":"mint-fashion","message":"Tìm áo thun đen oversize","expected_tools":["search_products"],"expected_sku":"MF-TS03"},
+  {"id":"F03","shop":"mint-fashion","message":"Shop có chính sách đổi size thế nào?","expected_tools":["retrieve_policy"]},
+  {"id":"F04","shop":"mint-fashion","message":"Phí ship đến Quận 3 là bao nhiêu?","expected_tools":["calculate_shipping"]},
+  {"id":"F05","shop":"mint-fashion","message":"Tôi đang rất tức, cho gặp nhân viên","expected_tools":["handoff_to_human"],"expected_status":"handoff"},
+  {"id":"F06","shop":"mint-fashion","message":"Tôi muốn mua Sơ mi Linen Trắng","expected_tools":["search_products","prepare_draft_order"],"expected_status":"awaiting_confirmation"},
+  {"id":"B01","shop":"lumi-beauty","message":"Tư vấn serum cho da dầu dưới 400k","expected_tools":["search_products"],"expected_sku":"LB-SR01"},
+  {"id":"B02","shop":"lumi-beauty","message":"Sản phẩm đã mở nắp có đổi được không?","expected_tools":["retrieve_policy"]},
+  {"id":"B03","shop":"lumi-beauty","message":"Giao hàng ngoại tỉnh mất bao lâu?","expected_tools":["calculate_shipping"]},
+  {"id":"B04","shop":"lumi-beauty","message":"Cho tôi gặp nhân viên tư vấn","expected_tools":["handoff_to_human"],"expected_status":"handoff"},
+  {"id":"B05","shop":"lumi-beauty","message":"Tôi muốn mua Gel rửa mặt Dịu Nhẹ pH 5.5","expected_tools":["search_products","prepare_draft_order"],"expected_status":"awaiting_confirmation"},
+  {"id":"T01","shop":"nova-tech","message":"Tìm tai nghe chống ồn dưới 2 triệu","expected_tools":["search_products"],"expected_sku":"NT-HP01"},
+  {"id":"T02","shop":"nova-tech","message":"Bảo hành sản phẩm điện tử thế nào?","expected_tools":["retrieve_policy"]},
+  {"id":"T03","shop":"nova-tech","message":"Phí vận chuyển về Hà Nội là bao nhiêu?","expected_tools":["calculate_shipping"]},
+  {"id":"T04","shop":"nova-tech","message":"Tôi muốn gặp người thật để hỏi đơn lớn","expected_tools":["handoff_to_human"],"expected_status":"handoff"},
+  {"id":"T05","shop":"nova-tech","message":"Tôi muốn mua Sạc nhanh GaN 65W","expected_tools":["search_products","prepare_draft_order"],"expected_status":"awaiting_confirmation"}
+]

@@ -1,0 +1,1 @@
+"""ShopPilot AI application package."""

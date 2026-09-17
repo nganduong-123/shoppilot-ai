@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    conversation_id: str | None = None
+
+
+class ChatResponse(BaseModel):
+    conversation_id: str
+    message: str
+    status: str
+    quick_replies: list[str] = []
+    products: list[dict[str, Any]] = []
+    draft_order: dict[str, Any] | None = None
+    handoff: dict[str, Any] | None = None
+    model: str
+
+
+class ShopCreate(BaseModel):
+    slug: str = Field(pattern=r"^[a-z0-9-]+$", min_length=3, max_length=50)
+    name: str = Field(min_length=2, max_length=100)
+    category: str = Field(min_length=2, max_length=60)
+    tagline: str = Field(min_length=2, max_length=160)
+    policy_text: str = Field(min_length=20, max_length=8000)
+    voice: str = Field(default="Thân thiện, ngắn gọn và trung thực.", max_length=500)
+
+
+class ProductCreate(BaseModel):
+    sku: str = Field(min_length=2, max_length=50)
+    name: str = Field(min_length=2, max_length=160)
+    category: str = Field(min_length=2, max_length=60)
+    description: str = Field(default="", max_length=1000)
+    price: int = Field(ge=0)
+    stock: int = Field(ge=0)
+    attributes: dict[str, Any] = {}
