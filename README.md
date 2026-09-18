@@ -16,6 +16,7 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Safe write workflow:** draft order → explicit customer confirmation → final inventory check → stock update.
 - **Human handoff:** escalates complaints, exceptions and low-confidence cases with conversation context.
 - **Unified inbox:** Website and Messenger conversations share one queue, with an AI/human takeover switch.
+- **Meta review readiness:** public privacy/terms pages plus a signed user-data deletion callback and status receipt.
 - **Embeddable web widget:** add a sales assistant to an existing store with one script tag.
 - **Auditable traces:** records every tool, arguments, result, latency and outcome.
 - **Resilient fallback:** core flows continue when the LLM provider is unavailable.
@@ -101,7 +102,7 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **16 automated tests passed**
+- **20 automated tests passed**
 - **6/6 browser E2E checks passed** across AI reply, inbox and human takeover.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
@@ -122,6 +123,9 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 | `GET` | `/api/shops/{slug}/inbox/conversations/{id}/messages` | Read a channel thread |
 | `POST` | `/api/shops/{slug}/inbox/conversations/{id}/messages` | Reply as a human agent |
 | `POST` | `/api/shops/{slug}/inbox/conversations/{id}/bot` | Switch between AI and human handling |
+| `GET` | `/api/integrations/meta/status` | Read review URLs and configuration readiness without exposing secrets |
+| `POST` | `/api/meta/data-deletion` | Verify Meta's signed deletion request and remove user data |
+| `GET` | `/api/data-deletion/status/{code}` | Check an anonymous deletion receipt |
 | `POST` | `/api/shops/{slug}/products/import` | Import catalog CSV |
 | `GET` | `/api/conversations/{id}/trace` | Inspect messages, tools and actions |
 | `GET` | `/api/shops/{slug}/metrics` | Read operational demo metrics |
@@ -169,6 +173,8 @@ This repository is a portfolio MVP. Catalog, shipping rules and order fulfillmen
 For a local preview, open <http://127.0.0.1:8000/static/widget.html?shop=mint-fashion>.
 
 Messenger setup: [docs/META_SETUP.md](docs/META_SETUP.md).
+
+Public review pages are available at `/privacy`, `/terms` and `/data-deletion`.
 
 ## Learn the project
 

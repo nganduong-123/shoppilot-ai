@@ -152,12 +152,24 @@ CREATE TABLE IF NOT EXISTS channel_events (
     UNIQUE(channel, external_event_id)
 );
 
+CREATE TABLE IF NOT EXISTS data_deletion_requests (
+    confirmation_code TEXT PRIMARY KEY,
+    platform TEXT NOT NULL,
+    external_user_hash TEXT NOT NULL,
+    deleted_records INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'completed',
+    requested_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_conversation ON tool_calls(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_channel_conversations_shop ON channel_conversations(shop_id, last_message_at);
 CREATE INDEX IF NOT EXISTS idx_channel_messages_conversation ON channel_messages(channel_conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_channel_events_status ON channel_events(status, received_at);
+CREATE INDEX IF NOT EXISTS idx_data_deletion_status
+    ON data_deletion_requests(status, requested_at);
 """
 
 

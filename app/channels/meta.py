@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
+import json
 from typing import Any
 
 import httpx
@@ -40,6 +42,35 @@ class MetaMessengerAdapter(ChannelAdapter):
             and self.config.meta_verify_token
             and hmac.compare_digest(token, self.config.meta_verify_token)
         )
+
+    def parse_signed_request(self, signed_request: str) -> dict[str, Any]:
+        if not self.config.meta_app_secret:
+            raise ValueError("META_APP_SECRET chưa được cấu hình.")
+        try:
+            encoded_signature, encoded_payload = signed_request.split(".", 1)
+            signature = self._decode_base64url(encoded_signature)
+            payload = json.loads(self._decode_base64url(encoded_payload))
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("Meta signed_request không hợp lệ.") from exc
+
+        algorithm = str(payload.get("algorithm", "HMAC-SHA256")).upper()
+        if algorithm != "HMAC-SHA256":
+            raise ValueError("Thuật toán signed_request không được hỗ trợ.")
+        expected = hmac.new(
+            self.config.meta_app_secret.encode("utf-8"),
+            encoded_payload.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError("Chữ ký Meta signed_request không hợp lệ.")
+        if not payload.get("user_id"):
+            raise ValueError("Meta signed_request thiếu user_id.")
+        return payload
+
+    @staticmethod
+    def _decode_base64url(value: str) -> bytes:
+        padding = "=" * (-len(value) % 4)
+        return base64.urlsafe_b64decode(value + padding)
 
     def parse_events(self, payload: dict[str, Any]) -> list[InboundMessage]:
         if payload.get("object") != "page":

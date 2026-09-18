@@ -14,7 +14,7 @@ load_dotenv(BASE_DIR / ".env")
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "ShopPilot AI"
-    app_version: str = "0.2.0"
+    app_version: str = "0.3.0"
     app_env: str = os.getenv("APP_ENV", "development")
     database_path: Path = BASE_DIR / os.getenv("DATABASE_PATH", "data/shoppilot.db")
     groq_api_key: str | None = os.getenv("GROQ_API_KEY")
@@ -27,7 +27,7 @@ class Settings:
     meta_app_secret: str | None = os.getenv("META_APP_SECRET")
     meta_page_access_token: str | None = os.getenv("META_PAGE_ACCESS_TOKEN")
     meta_verify_token: str | None = os.getenv("META_VERIFY_TOKEN")
-    meta_graph_api_version: str = os.getenv("META_GRAPH_API_VERSION", "v23.0")
+    meta_graph_api_version: str = os.getenv("META_GRAPH_API_VERSION", "v25.0")
 
 
 settings = Settings()

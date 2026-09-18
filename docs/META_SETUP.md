@@ -33,7 +33,7 @@ META_APP_ID=
 META_APP_SECRET=
 META_PAGE_ACCESS_TOKEN=
 META_VERIFY_TOKEN=
-META_GRAPH_API_VERSION=v23.0
+META_GRAPH_API_VERSION=v25.0
 ```
 
 `META_VERIFY_TOKEN` nên là chuỗi ngẫu nhiên dài. Không gửi `META_APP_SECRET` hoặc `META_PAGE_ACCESS_TOKEN` qua chat, ảnh chụp màn hình hay issue GitHub.
@@ -45,6 +45,19 @@ META_GRAPH_API_VERSION=v23.0
 3. Nhắn Page từ một tài khoản được phép thử app.
 4. Mở Unified Inbox và kiểm tra tin đến, phản hồi AI và công tắc tiếp quản.
 5. Gửi cùng một webhook hai lần để xác nhận hệ thống không tạo hai phản hồi.
+
+## 5. URL phục vụ App Review
+
+Sau khi deploy, mở `GET /api/integrations/meta/status` để lấy đúng các URL công khai mà
+không làm lộ token:
+
+- Privacy Policy: `/privacy`
+- Terms of Service: `/terms`
+- User Data Deletion Instructions: `/data-deletion`
+- Data Deletion Callback: `/api/meta/data-deletion`
+
+Callback xóa dữ liệu xác minh `signed_request` bằng App Secret, xóa hội thoại của Meta user
+và trả `confirmation_code` cùng URL theo dõi. Không dùng URL tunnel ngắn hạn khi nộp review.
 
 ## Giới hạn của pilot
 

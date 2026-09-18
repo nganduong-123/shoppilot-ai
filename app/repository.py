@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from typing import Any
 from uuid import uuid4
@@ -20,6 +21,14 @@ def _hydrate_conversation(row: Any) -> dict[str, Any]:
     pending_raw = conversation.pop("pending_action_json")
     conversation["pending_action"] = json_loads(pending_raw) if pending_raw else None
     return conversation
+
+
+def _json_contains_exact(value: Any, needle: str) -> bool:
+    if isinstance(value, dict):
+        return any(_json_contains_exact(item, needle) for item in value.values())
+    if isinstance(value, list):
+        return any(_json_contains_exact(item, needle) for item in value)
+    return str(value) == needle if value is not None else False
 
 
 class Repository:
@@ -525,6 +534,121 @@ class Repository:
                 (int(enabled), assigned_to, utc_now(), conversation_id),
             )
         return self.get_channel_conversation(conversation_id)
+
+    def delete_external_customer_data(
+        self,
+        *,
+        channel: str,
+        external_customer_id: str,
+        confirmation_code: str,
+    ) -> dict[str, Any]:
+        """Delete channel data for one platform user and keep an anonymous audit receipt."""
+        now = utc_now()
+        external_user_hash = hashlib.sha256(
+            f"{channel}:{external_customer_id}".encode("utf-8")
+        ).hexdigest()
+        deleted_records = 0
+
+        with db_session() as connection:
+            channel_rows = connection.execute(
+                """
+                SELECT id, internal_conversation_id
+                FROM channel_conversations
+                WHERE channel = ? AND external_customer_id = ?
+                """,
+                (channel, external_customer_id),
+            ).fetchall()
+            channel_ids = [row["id"] for row in channel_rows]
+            conversation_ids = list(
+                dict.fromkeys(row["internal_conversation_id"] for row in channel_rows)
+            )
+
+            if channel_ids:
+                placeholders = ",".join("?" for _ in channel_ids)
+                deleted_records += connection.execute(
+                    f"SELECT COUNT(*) FROM channel_messages "
+                    f"WHERE channel_conversation_id IN ({placeholders})",
+                    channel_ids,
+                ).fetchone()[0]
+                deleted_records += len(channel_ids)
+
+            if conversation_ids:
+                placeholders = ",".join("?" for _ in conversation_ids)
+                for table in ("messages", "tool_calls", "draft_orders", "handoffs"):
+                    deleted_records += connection.execute(
+                        f"SELECT COUNT(*) FROM {table} "
+                        f"WHERE conversation_id IN ({placeholders})",
+                        conversation_ids,
+                    ).fetchone()[0]
+                deleted_records += len(conversation_ids)
+
+                connection.execute(
+                    f"DELETE FROM draft_orders WHERE conversation_id IN ({placeholders})",
+                    conversation_ids,
+                )
+                connection.execute(
+                    f"DELETE FROM handoffs WHERE conversation_id IN ({placeholders})",
+                    conversation_ids,
+                )
+                # messages, tool calls, channel conversations and channel messages cascade.
+                connection.execute(
+                    f"DELETE FROM conversations WHERE id IN ({placeholders})",
+                    conversation_ids,
+                )
+
+            event_rows = connection.execute(
+                "SELECT id, payload_json FROM channel_events WHERE channel = ?",
+                (channel,),
+            ).fetchall()
+            event_ids = [
+                row["id"]
+                for row in event_rows
+                if _json_contains_exact(json_loads(row["payload_json"]), external_customer_id)
+            ]
+            if event_ids:
+                placeholders = ",".join("?" for _ in event_ids)
+                connection.execute(
+                    f"DELETE FROM channel_events WHERE id IN ({placeholders})", event_ids
+                )
+                deleted_records += len(event_ids)
+
+            connection.execute(
+                """
+                INSERT INTO data_deletion_requests
+                    (confirmation_code, platform, external_user_hash, deleted_records,
+                     status, requested_at, completed_at)
+                VALUES (?, ?, ?, ?, 'completed', ?, ?)
+                """,
+                (
+                    confirmation_code,
+                    channel,
+                    external_user_hash,
+                    deleted_records,
+                    now,
+                    now,
+                ),
+            )
+
+        return {
+            "confirmation_code": confirmation_code,
+            "status": "completed",
+            "deleted_records": deleted_records,
+            "requested_at": now,
+            "completed_at": now,
+        }
+
+    def get_data_deletion_status(self, confirmation_code: str) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT confirmation_code, platform, deleted_records, status,
+                       requested_at, completed_at
+                FROM data_deletion_requests
+                WHERE confirmation_code = ?
+                """,
+                (confirmation_code,),
+            ).fetchone()
+            return row_to_dict(row)
 
 
 repository = Repository()

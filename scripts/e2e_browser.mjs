@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { rm } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -95,7 +96,7 @@ async function api(route, options) {
 }
 
 const health = await api("/api/health");
-if (health.version !== "0.2.0" || !health.channels?.web) {
+if (health.status !== "ok" || !/^\d+\.\d+\.\d+$/.test(health.version) || !health.channels?.web) {
   throw new Error(`Unexpected server health: ${JSON.stringify(health)}`);
 }
 
@@ -204,5 +205,8 @@ try {
   }, null, 2));
   client.socket.close();
 } finally {
+  const exited = new Promise(resolve => chrome.once("exit", resolve));
   chrome.kill();
+  await Promise.race([exited, sleep(3_000)]);
+  await rm(userData, { recursive: true, force: true }).catch(() => {});
 }

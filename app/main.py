@@ -3,8 +3,10 @@ from __future__ import annotations
 import csv
 import io
 import json
+import secrets
 import sqlite3
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
@@ -62,6 +64,21 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/privacy", include_in_schema=False)
+def privacy_policy() -> FileResponse:
+    return FileResponse(STATIC_DIR / "privacy.html")
+
+
+@app.get("/terms", include_in_schema=False)
+def terms_of_service() -> FileResponse:
+    return FileResponse(STATIC_DIR / "terms.html")
+
+
+@app.get("/data-deletion", include_in_schema=False)
+def data_deletion_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "data-deletion.html")
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {
@@ -72,6 +89,28 @@ def health() -> dict:
         "channels": {
             "web": True,
             "messenger": MetaMessengerAdapter().configured,
+        },
+    }
+
+
+@app.get("/api/integrations/meta/status")
+def meta_integration_status() -> dict:
+    public_url = settings.public_base_url.rstrip("/")
+    return {
+        "configured": MetaMessengerAdapter().configured,
+        "requirements": {
+            "app_id": bool(settings.meta_app_id),
+            "app_secret": bool(settings.meta_app_secret),
+            "page_id": bool(settings.meta_page_id),
+            "page_access_token": bool(settings.meta_page_access_token),
+            "verify_token": bool(settings.meta_verify_token),
+        },
+        "urls": {
+            "webhook": f"{public_url}/api/webhooks/meta",
+            "privacy": f"{public_url}/privacy",
+            "terms": f"{public_url}/terms",
+            "data_deletion": f"{public_url}/data-deletion",
+            "data_deletion_callback": f"{public_url}/api/meta/data-deletion",
         },
     }
 
@@ -224,6 +263,40 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
             inbox_service.process, shop, event, adapter, connection["id"]
         )
     return {"status": "accepted", "events": len(events)}
+
+
+@app.post("/api/meta/data-deletion")
+async def receive_meta_data_deletion(request: Request) -> dict:
+    form = await request.form()
+    signed_request = form.get("signed_request")
+    if not isinstance(signed_request, str) or not signed_request:
+        raise HTTPException(status_code=400, detail="Thiếu Meta signed_request.")
+    try:
+        payload = MetaMessengerAdapter().parse_signed_request(signed_request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    confirmation_code = secrets.token_urlsafe(18)
+    repository.delete_external_customer_data(
+        channel="messenger",
+        external_customer_id=str(payload["user_id"]),
+        confirmation_code=confirmation_code,
+    )
+    status_url = (
+        f"{settings.public_base_url.rstrip('/')}/data-deletion"
+        f"?code={quote(confirmation_code)}"
+    )
+    return {"url": status_url, "confirmation_code": confirmation_code}
+
+
+@app.get("/api/data-deletion/status/{confirmation_code}")
+def data_deletion_status(confirmation_code: str) -> dict:
+    if len(confirmation_code) > 100:
+        raise HTTPException(status_code=404, detail="Không tìm thấy yêu cầu xóa dữ liệu.")
+    result = repository.get_data_deletion_status(confirmation_code)
+    if not result:
+        raise HTTPException(status_code=404, detail="Không tìm thấy yêu cầu xóa dữ liệu.")
+    return result
 
 
 @app.get("/api/shops/{slug}/inbox/conversations")
