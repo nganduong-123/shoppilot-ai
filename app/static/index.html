@@ -47,6 +47,10 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg></span>
           Traces & metrics
         </button>
+        <button class="nav-item" data-view="integrations">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M8 12h8M5 8l-3 4 3 4m14-8 3 4-3 4M9 5l6 14"/></svg></span>
+          Integrations <span class="nav-count" id="integration-count">1/2</span>
+        </button>
       </nav>
 
       <div class="sidebar-note">
@@ -155,6 +159,41 @@
         <div class="trace-table-card">
           <div class="table-head"><div><strong>Trace gần nhất</strong><small id="trace-conversation-id">Chưa có conversation</small></div><button id="refresh-trace" class="text-button">Làm mới</button></div>
           <div id="full-trace" class="full-trace"></div>
+        </div>
+      </section>
+
+      <section class="view" id="view-integrations">
+        <div class="integration-hero">
+          <div><p class="section-kicker">CHANNEL SETUP</p><h2>Kết nối các kênh bán hàng</h2><p>Kiểm tra cấu hình, lấy URL callback và chuẩn bị hồ sơ Meta App Review tại một nơi.</p></div>
+          <span class="audit-badge">NO SECRETS EXPOSED</span>
+        </div>
+        <div class="integration-grid">
+          <article class="integration-card channel-card">
+            <div class="integration-card-head"><span class="integration-logo web-logo">W</span><div><h3>Website widget</h3><p>Nhúng trợ lý vào website hiện có.</p></div><span class="connection-badge connected">Đã bật</span></div>
+            <div class="code-block"><code>&lt;script src="/static/widget.js" data-shop="mint-fashion"&gt;&lt;/script&gt;</code></div>
+            <a class="integration-action" href="/static/widget.html?shop=mint-fashion" target="_blank">Mở widget thử nghiệm ↗</a>
+          </article>
+
+          <article class="integration-card channel-card">
+            <div class="integration-card-head"><span class="integration-logo meta-logo">f</span><div><h3>Facebook Messenger</h3><p>Nhận tin Page vào Unified Inbox.</p></div><span class="connection-badge" id="meta-connection-badge">Chờ cấu hình</span></div>
+            <div class="requirement-list" id="meta-requirements"><div class="requirement-loading">Đang kiểm tra cấu hình…</div></div>
+          </article>
+
+          <article class="integration-card review-card">
+            <div class="integration-card-head"><span class="integration-logo shield-logo">✓</span><div><h3>Meta App Review kit</h3><p>Các URL công khai cần điền trong Meta Dashboard.</p></div></div>
+            <div class="review-url-list" id="meta-review-urls"></div>
+          </article>
+
+          <article class="integration-card roadmap-card">
+            <p class="section-kicker">PILOT CHECKLIST</p>
+            <h3>Đường tới bản chạy thật</h3>
+            <ol class="setup-steps">
+              <li class="done"><span>1</span><div><strong>Lõi omnichannel</strong><small>Inbox, AI/human handoff và chống webhook trùng.</small></div></li>
+              <li class="done"><span>2</span><div><strong>Privacy controls</strong><small>Chính sách, điều khoản và callback xóa dữ liệu.</small></div></li>
+              <li><span>3</span><div><strong>Kết nối Page pilot</strong><small>Tạo Meta app, webhook và Page access token.</small></div></li>
+              <li><span>4</span><div><strong>App Review</strong><small>Quay video, cung cấp tài khoản test và xin Advanced Access.</small></div></li>
+            </ol>
+          </article>
         </div>
       </section>
     </main>

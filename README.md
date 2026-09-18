@@ -22,6 +22,8 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Resilient fallback:** core flows continue when the LLM provider is unavailable.
 - **Evaluation-first:** automated tests plus a separate scenario suite for routing and safety behavior.
 
+![ShopPilot AI integration readiness](docs/images/integrations.png)
+
 ## Demo workspaces
 
 | Shop | Vertical | Domain-specific attributes |
@@ -103,7 +105,7 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 Current deterministic baseline:
 
 - **20 automated tests passed**
-- **6/6 browser E2E checks passed** across AI reply, inbox and human takeover.
+- **7/7 browser E2E checks passed** across AI reply, inbox, human takeover and integration readiness.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
 - Coverage includes tenant isolation, product grounding, stock guard, explicit confirmation, prompt injection refusal and human handoff.

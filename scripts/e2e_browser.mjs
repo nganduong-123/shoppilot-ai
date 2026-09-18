@@ -190,6 +190,17 @@ try {
     return lastTwo[0]?.content === resumedMessage && lastTwo[1]?.direction === "outbound";
   }, "AI replies after being re-enabled");
 
+  await client.navigate(`${base}/`, "#conversation-list");
+  await client.evaluate(`document.querySelector('[data-view="integrations"]').click()`);
+  await waitFor(
+    () => client.evaluate(`document.querySelectorAll("#meta-requirements .requirement-row").length === 5`),
+    "Meta integration requirements render",
+  );
+  await waitFor(
+    () => client.evaluate(`document.querySelectorAll("#meta-review-urls .review-url-row").length === 5`),
+    "Meta review URLs render",
+  );
+
   console.log(JSON.stringify({
     passed: true,
     version: health.version,
@@ -201,6 +212,7 @@ try {
       "human_reply_to_widget",
       "paused_ai_does_not_reply",
       "ai_resume",
+      "integration_readiness",
     ],
   }, null, 2));
   client.socket.close();
