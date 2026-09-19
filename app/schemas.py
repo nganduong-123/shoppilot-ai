@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -54,4 +54,9 @@ class BotControlRequest(BaseModel):
 
 class HumanReplyRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
+    agent_name: str = Field(default="Dương Thị Ngân", min_length=2, max_length=120)
+
+
+class InboxActionRequest(BaseModel):
+    action: Literal["takeover", "resolve", "reopen"]
     agent_name: str = Field(default="Dương Thị Ngân", min_length=2, max_length=120)

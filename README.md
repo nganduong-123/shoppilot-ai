@@ -16,6 +16,7 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Safe write workflow:** draft order → explicit customer confirmation → final inventory check → stock update.
 - **Human handoff:** escalates complaints, exceptions and low-confidence cases with conversation context.
 - **Unified inbox:** Website and Messenger conversations share one queue, with an AI/human takeover switch.
+- **Revenue-rescue queue:** detects buying signals, flags unanswered handoffs, tracks a five-minute SLA and lets staff take or resolve each conversation.
 - **Meta review readiness:** public privacy/terms pages plus a signed user-data deletion callback and status receipt.
 - **Embeddable web widget:** add a sales assistant to an existing store with one script tag.
 - **Auditable traces:** records every tool, arguments, result, latency and outcome.
@@ -105,7 +106,7 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 Current deterministic baseline:
 
 - **20 automated tests passed**
-- **7/7 browser E2E checks passed** across AI reply, inbox, human takeover and integration readiness.
+- **9/9 browser E2E checks passed** across AI reply, priority inbox, human takeover, resolution workflow and integration readiness.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
 - Coverage includes tenant isolation, product grounding, stock guard, explicit confirmation, prompt injection refusal and human handoff.
@@ -125,6 +126,8 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 | `GET` | `/api/shops/{slug}/inbox/conversations/{id}/messages` | Read a channel thread |
 | `POST` | `/api/shops/{slug}/inbox/conversations/{id}/messages` | Reply as a human agent |
 | `POST` | `/api/shops/{slug}/inbox/conversations/{id}/bot` | Switch between AI and human handling |
+| `POST` | `/api/shops/{slug}/inbox/conversations/{id}/actions` | Take over, resolve or reopen an inbox conversation |
+| `POST` | `/api/shops/{slug}/inbox/conversations/{id}/read` | Mark inbound messages as read |
 | `GET` | `/api/integrations/meta/status` | Read review URLs and configuration readiness without exposing secrets |
 | `POST` | `/api/meta/data-deletion` | Verify Meta's signed deletion request and remove user data |
 | `GET` | `/api/data-deletion/status/{code}` | Check an anonymous deletion receipt |

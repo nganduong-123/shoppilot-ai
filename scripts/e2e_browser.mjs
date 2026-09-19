@@ -152,6 +152,7 @@ try {
 
   await client.navigate(`${base}/`, "#conversation-list");
   await waitFor(() => client.evaluate(`document.querySelectorAll(".conversation-item").length > 0`), "inbox list");
+  await client.evaluate(`document.querySelector(${JSON.stringify(`[data-id="${conversation.id}"]`)}).click()`);
   await waitFor(() => client.evaluate(`!document.querySelector("#thread-content").hidden`), "inbox thread opens");
   await client.evaluate(`document.querySelector("#bot-enabled").click()`);
   await waitFor(async () => !(await findConversation()).bot_enabled, "human takeover enabled");
@@ -168,7 +169,7 @@ try {
     () => client.evaluate(`document.querySelector("#messages").innerText.includes(${JSON.stringify(humanReply)})`),
     "human reply reaches widget",
   );
-  const pausedMessage = `AI có đang tắt không ${marker}`;
+  const pausedMessage = `Tôi muốn mua, có nhân viên hỗ trợ không ${marker}`;
   await client.evaluate(`document.querySelector("#input").value=${JSON.stringify(pausedMessage)};document.querySelector("#form").requestSubmit()`);
   await waitFor(async () => {
     history = await api(`/api/channels/web/${shop}/conversations/${externalId}/messages`);
@@ -176,6 +177,15 @@ try {
   }, "message waits for human while AI is paused");
 
   await client.navigate(`${base}/`, "#conversation-list");
+  await waitFor(
+    () => client.evaluate(`document.querySelector(${JSON.stringify(`[data-id="${conversation.id}"]`)})?.classList.contains("urgent") === true`),
+    "sales inbox prioritizes waiting lead",
+  );
+  await waitFor(
+    () => client.evaluate(`Number(document.querySelector("#inbox-attention").textContent) > 0`),
+    "attention KPI updates",
+  );
+  await client.evaluate(`document.querySelector(${JSON.stringify(`[data-id="${conversation.id}"]`)}).click()`);
   await waitFor(() => client.evaluate(`!document.querySelector("#thread-content").hidden`), "thread reopens");
   await waitFor(() => client.evaluate(`document.querySelector("#bot-enabled").checked === false`), "takeover state shown");
   await client.evaluate(`document.querySelector("#bot-enabled").click()`);
@@ -191,6 +201,15 @@ try {
   }, "AI replies after being re-enabled");
 
   await client.navigate(`${base}/`, "#conversation-list");
+  await waitFor(() => client.evaluate(`!!document.querySelector(${JSON.stringify(`[data-id="${conversation.id}"]`)})`), "conversation stays in queue");
+  await client.evaluate(`document.querySelector(${JSON.stringify(`[data-id="${conversation.id}"]`)}).click()`);
+  await client.evaluate(`document.querySelector("#resolve-conversation").click()`);
+  await waitFor(async () => (await findConversation()).status === "resolved", "conversation resolves from inbox");
+  await client.evaluate(`document.querySelector('[data-inbox-filter="resolved"]').click()`);
+  await waitFor(
+    () => client.evaluate(`document.querySelector(${JSON.stringify(`[data-id="${conversation.id}"]`)})?.innerText.includes("Đã xong") === true`),
+    "resolved filter shows completed conversation",
+  );
   await client.evaluate(`document.querySelector('[data-view="integrations"]').click()`);
   await waitFor(
     () => client.evaluate(`document.querySelectorAll("#meta-requirements .requirement-row").length === 5`),
@@ -212,6 +231,8 @@ try {
       "human_reply_to_widget",
       "paused_ai_does_not_reply",
       "ai_resume",
+      "priority_and_sla_queue",
+      "resolve_workflow",
       "integration_readiness",
     ],
   }, null, 2));

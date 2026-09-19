@@ -26,6 +26,7 @@ from app.schemas import (
     BotControlRequest,
     ChatRequest,
     ChatResponse,
+    InboxActionRequest,
     ProductCreate,
     HumanReplyRequest,
     ShopCreate,
@@ -317,6 +318,41 @@ def require_channel_conversation(slug: str, conversation_id: str) -> tuple[dict,
 def list_inbox_messages(slug: str, conversation_id: str) -> list[dict]:
     require_channel_conversation(slug, conversation_id)
     return repository.list_channel_messages(conversation_id)
+
+
+@app.post("/api/shops/{slug}/inbox/conversations/{conversation_id}/read")
+def mark_inbox_conversation_read(slug: str, conversation_id: str) -> dict:
+    require_channel_conversation(slug, conversation_id)
+    return {"read": repository.mark_channel_messages_read(conversation_id)}
+
+
+@app.post("/api/shops/{slug}/inbox/conversations/{conversation_id}/actions")
+def update_inbox_workflow(
+    slug: str, conversation_id: str, payload: InboxActionRequest
+) -> dict:
+    require_channel_conversation(slug, conversation_id)
+    if payload.action == "takeover":
+        updated = repository.update_channel_workflow(
+            conversation_id,
+            status="open",
+            assigned_to=payload.agent_name,
+            bot_enabled=False,
+        )
+    elif payload.action == "resolve":
+        updated = repository.update_channel_workflow(
+            conversation_id,
+            status="resolved",
+            assigned_to=None,
+            bot_enabled=True,
+        )
+    else:
+        updated = repository.update_channel_workflow(
+            conversation_id,
+            status="open",
+            assigned_to=payload.agent_name,
+            bot_enabled=False,
+        )
+    return updated or {}
 
 
 @app.post("/api/shops/{slug}/inbox/conversations/{conversation_id}/bot")

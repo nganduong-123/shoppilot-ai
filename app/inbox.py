@@ -49,6 +49,12 @@ class InboxService:
                 metadata=inbound.metadata,
             )
             if not conversation["bot_enabled"]:
+                self.repo.update_channel_workflow(
+                    conversation["id"],
+                    status="waiting",
+                    assigned_to=conversation.get("assigned_to"),
+                    bot_enabled=False,
+                )
                 self.repo.add_message(
                     conversation["internal_conversation_id"],
                     "user",
@@ -67,6 +73,8 @@ class InboxService:
             result = await self.agent.respond(
                 shop, inbound.text, conversation["internal_conversation_id"]
             )
+            if result["status"] == "handoff":
+                self.repo.set_channel_bot(conversation["id"], False, None)
             delivery = await adapter.send_text(inbound.external_customer_id, result["message"])
             outbound_id = delivery.get("message_id") if isinstance(delivery, dict) else None
             self.repo.add_channel_message(
@@ -115,6 +123,12 @@ class InboxService:
             "assistant",
             text,
             {"source": "human-agent", "agent_name": agent_name},
+        )
+        self.repo.update_channel_workflow(
+            conversation["id"],
+            status="open",
+            assigned_to=agent_name,
+            bot_enabled=False,
         )
         return message
 

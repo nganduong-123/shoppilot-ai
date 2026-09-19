@@ -212,7 +212,7 @@ def test_web_widget_message_appears_in_unified_inbox_and_bot_can_be_paused():
         second = client.post(
             "/api/channels/web/mint-fashion/messages",
             json={
-                "message": "Tôi cần gặp nhân viên",
+                "message": "Tôi muốn mua, cần gặp nhân viên",
                 "conversation_id": body["conversation_id"],
             },
         )
@@ -220,12 +220,34 @@ def test_web_widget_message_appears_in_unified_inbox_and_bot_can_be_paused():
         assert second.json()["replied"] is False
         assert second.json()["status"] == "waiting_for_human"
 
+        queue_item = client.get(
+            "/api/shops/mint-fashion/inbox/conversations"
+        ).json()[0]
+        assert queue_item["status"] == "waiting"
+        assert queue_item["needs_attention"] is True
+        assert queue_item["sales_intent"] is True
+        assert queue_item["priority"] == "urgent"
+
+        read = client.post(
+            f"/api/shops/mint-fashion/inbox/conversations/{inbox_id}/read"
+        )
+        assert read.status_code == 200
+        assert read.json()["read"] >= 1
+
         reply = client.post(
             f"/api/shops/mint-fashion/inbox/conversations/{inbox_id}/messages",
             json={"message": "Chào bạn, mình tiếp nhận tư vấn nhé.", "agent_name": "Ngân"},
         )
         assert reply.status_code == 201
         assert reply.json()["sender_type"] == "human"
+
+        resolved = client.post(
+            f"/api/shops/mint-fashion/inbox/conversations/{inbox_id}/actions",
+            json={"action": "resolve", "agent_name": "Ngân"},
+        )
+        assert resolved.status_code == 200
+        assert resolved.json()["status"] == "resolved"
+        assert resolved.json()["bot_enabled"] is True
 
         history = client.get(
             f"/api/channels/web/mint-fashion/conversations/{body['conversation_id']}/messages"

@@ -86,15 +86,33 @@
           <div><p class="section-kicker">OMNICHANNEL</p><h2>Tất cả khách hàng, một nơi xử lý</h2><p>AI trả lời câu hỏi thường gặp; nhân viên tiếp quản các ca cần kỹ năng chốt đơn.</p></div>
           <div class="channel-status"><span><i class="web"></i>Website đã bật</span><span id="meta-channel-status"><i></i>Messenger chờ kết nối</span></div>
         </div>
+        <div class="inbox-summary">
+          <article><span>Cần xử lý</span><strong id="inbox-attention">0</strong><small>đang chờ nhân viên</small></article>
+          <article><span>Quá SLA 5 phút</span><strong id="inbox-overdue">0</strong><small>ưu tiên trả lời ngay</small></article>
+          <article><span>Khách có ý định mua</span><strong id="inbox-sales-leads">0</strong><small>có tín hiệu chốt đơn</small></article>
+          <article><span>AI đang trực</span><strong id="inbox-automated">0</strong><small>hội thoại tự động</small></article>
+        </div>
         <div class="inbox-layout">
           <aside class="conversation-panel">
             <div class="conversation-head"><strong>Hội thoại</strong><button class="text-button" id="refresh-inbox">Làm mới</button></div>
+            <div class="inbox-filters" aria-label="Lọc hội thoại">
+              <button class="active" type="button" data-inbox-filter="all">Tất cả</button>
+              <button type="button" data-inbox-filter="attention">Cần xử lý</button>
+              <button type="button" data-inbox-filter="resolved">Đã xong</button>
+            </div>
             <div id="conversation-list" class="conversation-list"></div>
           </aside>
           <section class="thread-panel">
             <div class="thread-empty" id="thread-empty"><span>✦</span><strong>Chưa chọn hội thoại</strong><p>Gửi thử tin nhắn từ widget website hoặc kết nối Facebook Page.</p><a href="/static/widget.html?shop=mint-fashion" target="_blank">Mở widget thử nghiệm</a></div>
             <div id="thread-content" class="thread-content" hidden>
-              <header class="thread-head"><div><strong id="thread-customer">Khách hàng</strong><small id="thread-channel">Website</small></div><label class="bot-toggle"><input type="checkbox" id="bot-enabled" checked><span></span><em id="bot-label">AI đang trả lời</em></label></header>
+              <header class="thread-head">
+                <div><strong id="thread-customer">Khách hàng</strong><small><span id="thread-channel">Website</span> · <span id="thread-status">AI đang xử lý</span></small></div>
+                <div class="thread-actions">
+                  <button type="button" class="workflow-button" id="takeover-conversation">Nhận xử lý</button>
+                  <button type="button" class="workflow-button complete" id="resolve-conversation">Hoàn tất</button>
+                  <label class="bot-toggle"><input type="checkbox" id="bot-enabled" checked><span></span><em id="bot-label">AI đang trả lời</em></label>
+                </div>
+              </header>
               <div class="thread-messages" id="thread-messages"></div>
               <form class="thread-composer" id="thread-reply-form"><input id="thread-reply-input" maxlength="2000" placeholder="Nhân viên nhập câu trả lời…"><button type="submit">Gửi</button></form>
               <div class="handoff-note">Tắt AI để nhân viên tiếp quản. Lịch sử và ngữ cảnh vẫn được giữ nguyên.</div>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -29,6 +30,63 @@ def _json_contains_exact(value: Any, needle: str) -> bool:
     if isinstance(value, list):
         return any(_json_contains_exact(item, needle) for item in value)
     return str(value) == needle if value is not None else False
+
+
+BUYING_SIGNALS = (
+    "mua", "chốt", "đặt", "lấy", "còn hàng", "còn size", "giá bao nhiêu",
+    "phí ship", "giao hàng", "thanh toán", "tư vấn",
+)
+
+
+def _inbox_attention(item: dict[str, Any]) -> dict[str, Any]:
+    """Derive an explainable sales-priority snapshot from persisted inbox state."""
+    if item["status"] == "resolved":
+        return {
+            "priority": "resolved",
+            "needs_attention": False,
+            "sales_intent": False,
+            "wait_seconds": 0,
+            "sla_breached": False,
+        }
+
+    inbound_text = (item.get("last_inbound_message") or "").casefold()
+    sales_intent = any(signal in inbound_text for signal in BUYING_SIGNALS)
+    waiting_for_human = item["status"] == "waiting" or (
+        not item["bot_enabled"] and item.get("last_direction") == "inbound"
+    )
+    wait_seconds = 0
+    if waiting_for_human and item.get("last_inbound_at"):
+        try:
+            started = datetime.fromisoformat(item["last_inbound_at"])
+            wait_seconds = max(0, int((datetime.now(UTC) - started).total_seconds()))
+        except (TypeError, ValueError):
+            wait_seconds = 0
+
+    sla_breached = waiting_for_human and wait_seconds >= 300
+    if sla_breached or (waiting_for_human and sales_intent):
+        priority = "urgent"
+    elif waiting_for_human or sales_intent:
+        priority = "high"
+    else:
+        priority = "normal"
+    return {
+        "priority": priority,
+        "needs_attention": waiting_for_human,
+        "sales_intent": sales_intent,
+        "wait_seconds": wait_seconds,
+        "sla_breached": sla_breached,
+    }
+
+
+def _inbox_sort_key(item: dict[str, Any]) -> tuple[int, float]:
+    rank = {"urgent": 0, "high": 1, "normal": 2, "resolved": 3}[item["priority"]]
+    raw_time = item.get("last_inbound_at") or item["last_message_at"]
+    try:
+        timestamp = datetime.fromisoformat(raw_time).timestamp()
+    except (TypeError, ValueError):
+        timestamp = 0.0
+    # The oldest waiting customer comes first; other queues retain newest-first behavior.
+    return rank, timestamp if item["needs_attention"] else -timestamp
 
 
 class Repository:
@@ -405,6 +463,17 @@ class Repository:
                 row = connection.execute(
                     "SELECT * FROM channel_conversations WHERE id = ?", (channel_id,)
                 ).fetchone()
+            elif row["status"] == "resolved":
+                connection.execute(
+                    """
+                    UPDATE channel_conversations
+                    SET status = 'open', updated_at = ? WHERE id = ?
+                    """,
+                    (now, row["id"]),
+                )
+                row = connection.execute(
+                    "SELECT * FROM channel_conversations WHERE id = ?", (row["id"],)
+                ).fetchone()
             result = dict(row)
             result["bot_enabled"] = bool(result["bot_enabled"])
             result["metadata"] = json_loads(result.pop("metadata_json"))
@@ -460,9 +529,22 @@ class Repository:
                        (SELECT COUNT(*) FROM channel_messages cm
                         WHERE cm.channel_conversation_id = cc.id
                           AND cm.direction = 'inbound' AND cm.status = 'received') AS unread_count
+                       ,(SELECT direction FROM channel_messages cm
+                         WHERE cm.channel_conversation_id = cc.id
+                         ORDER BY cm.id DESC LIMIT 1) AS last_direction
+                       ,(SELECT content FROM channel_messages cm
+                         WHERE cm.channel_conversation_id = cc.id
+                           AND cm.direction = 'inbound'
+                         ORDER BY cm.id DESC LIMIT 1) AS last_inbound_message
+                       ,(SELECT created_at FROM channel_messages cm
+                         WHERE cm.channel_conversation_id = cc.id
+                           AND cm.direction = 'inbound'
+                         ORDER BY cm.id DESC LIMIT 1) AS last_inbound_at
                 FROM channel_conversations cc
                 WHERE cc.shop_id = ?
-                ORDER BY cc.last_message_at DESC LIMIT ?
+                ORDER BY
+                    CASE cc.status WHEN 'waiting' THEN 0 WHEN 'open' THEN 1 ELSE 2 END,
+                    cc.last_message_at DESC LIMIT ?
                 """,
                 (shop_id, limit),
             ).fetchall()
@@ -471,7 +553,9 @@ class Repository:
                 item = dict(row)
                 item["bot_enabled"] = bool(item["bot_enabled"])
                 item["metadata"] = json_loads(item.pop("metadata_json"))
+                item.update(_inbox_attention(item))
                 result.append(item)
+            result.sort(key=_inbox_sort_key)
             return result
 
     def get_channel_conversation(self, conversation_id: str) -> dict[str, Any] | None:
@@ -529,11 +613,47 @@ class Repository:
             connection.execute(
                 """
                 UPDATE channel_conversations
-                SET bot_enabled = ?, assigned_to = ?, updated_at = ? WHERE id = ?
+                SET bot_enabled = ?, assigned_to = ?,
+                    status = ?, updated_at = ? WHERE id = ?
                 """,
-                (int(enabled), assigned_to, utc_now(), conversation_id),
+                (
+                    int(enabled), assigned_to,
+                    "open" if enabled or assigned_to else "waiting",
+                    utc_now(), conversation_id,
+                ),
             )
         return self.get_channel_conversation(conversation_id)
+
+    def update_channel_workflow(
+        self,
+        conversation_id: str,
+        *,
+        status: str,
+        assigned_to: str | None,
+        bot_enabled: bool,
+    ) -> dict[str, Any] | None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                UPDATE channel_conversations
+                SET status = ?, assigned_to = ?, bot_enabled = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, assigned_to, int(bot_enabled), utc_now(), conversation_id),
+            )
+        return self.get_channel_conversation(conversation_id)
+
+    def mark_channel_messages_read(self, conversation_id: str) -> int:
+        with db_session() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE channel_messages SET status = 'read'
+                WHERE channel_conversation_id = ?
+                  AND direction = 'inbound' AND status = 'received'
+                """,
+                (conversation_id,),
+            )
+            return cursor.rowcount
 
     def delete_external_customer_data(
         self,
