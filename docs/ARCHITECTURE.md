@@ -4,8 +4,10 @@
 
 ```mermaid
 flowchart LR
-    U[Khách hàng] --> UI[Web chat]
-    UI --> API[FastAPI]
+    U[Khách hàng] --> C[Website / Messenger]
+    C --> AD[Channel adapters]
+    AD --> IB[Unified inbox]
+    IB --> API[FastAPI]
     API --> TR[Tenant resolver]
     TR --> AG[Sales agent loop]
     AG --> LLM[Groq LLM]
@@ -29,7 +31,33 @@ flowchart LR
 | `repository.py` | Đọc/ghi dữ liệu, luôn giới hạn theo `shop_id` |
 | `database.py` | Schema SQLite, transaction và foreign key |
 | `main.py` | HTTP API, validation và phục vụ giao diện |
+| `channels/` | Chuẩn hóa webhook từng nền tảng và gửi phản hồi |
+| `inbox.py` | Chống sự kiện trùng, lưu hội thoại, điều phối AI/người thật |
 | `static/` | Console chat, catalog, metrics và live trace |
+
+## Luồng omnichannel
+
+1. Adapter xác thực webhook của nền tảng và chuyển dữ liệu về `InboundMessage` chung.
+2. `channel_events` dùng ID từ nền tảng để không trả lời hai lần khi webhook được gửi lại.
+3. `channel_conversations` ánh xạ hội thoại bên ngoài vào hội thoại nội bộ của agent.
+4. Khi `bot_enabled=true`, agent xử lý rồi adapter gửi kết quả về đúng kênh.
+5. Khi nhân viên tắt AI, tin mới vẫn được lưu nhưng không tự trả lời; toàn bộ ngữ cảnh được giữ để nhân viên tiếp quản.
+6. Repository tính trạng thái cần chú ý từ handoff, hướng tin nhắn cuối, tín hiệu mua hàng và thời gian chờ. Ca chờ quá năm phút được đánh dấu vi phạm SLA.
+7. Nhân viên có thể nhận xử lý, trả lời, hoàn tất hoặc mở lại hội thoại. Tin nhắn mới tự mở lại hội thoại đã hoàn tất.
+8. Website trả lời trực tiếp qua HTTP. Messenger được tiếp nhận nhanh và xử lý trong background task.
+
+Priority là quy tắc minh bạch trong Python, không phải điểm số bí mật từ LLM. Vì vậy đội vận hành có thể giải thích tại sao một khách được đưa lên đầu hàng chờ và thay đổi ngưỡng SLA theo nhu cầu.
+
+Background task trong tiến trình phù hợp cho bản demo. Bản production cần hàng đợi bền vững như Redis/Celery để không mất sự kiện khi máy chủ khởi động lại.
+
+## Xóa dữ liệu Meta
+
+1. Meta gửi `signed_request` tới `/api/meta/data-deletion` khi người dùng yêu cầu xóa.
+2. Adapter giải mã Base64URL và kiểm tra HMAC-SHA256 bằng App Secret trước khi tin payload.
+3. Repository xóa hội thoại kênh, tin nhắn, trace, đơn nháp, handoff và event có đúng Meta user ID.
+4. Dữ liệu của khách khác không bị ảnh hưởng.
+5. Hệ thống chỉ giữ biên nhận ẩn danh gồm hash người dùng, mã xác nhận, thời gian và số bản ghi đã xóa.
+6. Người dùng theo dõi kết quả bằng `/data-deletion?code=...`; mã người dùng Meta không xuất hiện trong URL.
 
 ## Multi-tenant
 

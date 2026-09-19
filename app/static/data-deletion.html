@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Hướng dẫn yêu cầu xóa dữ liệu ShopPilot AI">
+  <title>Xóa dữ liệu · ShopPilot AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Manrope:wght@700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/legal.css">
+</head>
+<body>
+  <main class="legal-shell">
+    <nav class="legal-nav"><a class="legal-brand" href="/">Shop<span>Pilot</span></a><a class="back-link" href="/">← Quay lại ứng dụng</a></nav>
+    <header class="legal-hero">
+      <p class="eyebrow">DATA RIGHTS</p>
+      <h1>Yêu cầu xóa dữ liệu</h1>
+      <p class="lead">ShopPilot hỗ trợ callback xóa dữ liệu đã ký của Meta và cung cấp mã xác nhận để người dùng theo dõi kết quả.</p>
+      <div class="status-card" id="status-card" role="status"><strong id="status-title">Đang kiểm tra…</strong><span id="status-copy"></span></div>
+    </header>
+    <article class="legal-content">
+      <div class="notice">ShopPilot không yêu cầu mật khẩu, mã OTP hoặc access token để xử lý yêu cầu xóa dữ liệu.</div>
+      <section><h2>Xóa qua Facebook</h2><ol><li>Mở Facebook và vào <strong>Cài đặt & quyền riêng tư → Cài đặt</strong>.</li><li>Mở mục <strong>Ứng dụng và trang web</strong> hoặc <strong>Doanh nghiệp tích hợp</strong>.</li><li>Chọn <strong>ShopPilot AI</strong>, gỡ kết nối và chọn yêu cầu xóa dữ liệu nếu Facebook hiển thị lựa chọn đó.</li><li>Meta gửi một yêu cầu có chữ ký tới ShopPilot. Hệ thống xóa các hội thoại gắn với mã người dùng Meta và trả về mã xác nhận.</li></ol></section>
+      <section><h2>Dữ liệu được xóa</h2><p>Tin nhắn, trạng thái hội thoại, lịch sử gọi công cụ, bản nháp đơn hàng, handoff và bản ghi webhook có chứa mã người dùng Meta sẽ được xóa. Hệ thống chỉ giữ một biên nhận ẩn danh gồm mã xác nhận, trạng thái, thời gian và tổng số bản ghi đã xóa.</p></section>
+      <section><h2>Kiểm tra trạng thái</h2><p>Liên kết do Meta trả về có tham số <code>code</code>. Khi mở liên kết đó, trạng thái yêu cầu sẽ xuất hiện ở đầu trang. Nếu không có mã hoặc mã không tồn tại, trang không hiển thị dữ liệu tài khoản.</p></section>
+      <section><h2>Cần hỗ trợ?</h2><p>Mở một <a href="https://github.com/nganduong-123/shoppilot-ai/issues" rel="noreferrer" target="_blank">yêu cầu hỗ trợ trong repository</a> và chỉ cung cấp mã xác nhận. Không đăng nội dung hội thoại, số điện thoại, mật khẩu hoặc mã OTP.</p></section>
+    </article>
+    <footer class="legal-footer"><span>© 2026 ShopPilot AI</span><a href="/privacy">Quyền riêng tư</a><a href="/terms">Điều khoản</a></footer>
+  </main>
+  <script>
+    const code = new URLSearchParams(location.search).get("code");
+    if (code) {
+      const card = document.querySelector("#status-card");
+      const title = document.querySelector("#status-title");
+      const copy = document.querySelector("#status-copy");
+      card.classList.add("visible");
+      fetch(`/api/data-deletion/status/${encodeURIComponent(code)}`)
+        .then(response => response.ok ? response.json() : Promise.reject())
+        .then(data => {
+          title.textContent = data.status === "completed" ? "Đã xóa dữ liệu" : "Đang xử lý";
+          copy.textContent = `Mã xác nhận: ${data.confirmation_code} · ${data.deleted_records} bản ghi · ${new Date(data.completed_at || data.requested_at).toLocaleString("vi-VN")}`;
+        })
+        .catch(() => {
+          title.textContent = "Không tìm thấy yêu cầu";
+          copy.textContent = "Mã xác nhận không hợp lệ hoặc yêu cầu không còn tồn tại.";
+        });
+    }
+  </script>
+</body>
+</html>

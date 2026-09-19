@@ -50,6 +50,8 @@ Lợi ích:
 
 AI xử lý việc lặp lại; người thật xử lý khiếu nại, ngoại lệ, thương lượng và trường hợp thiếu căn cứ. `handoff_to_human` gửi lý do cùng lịch sử gần nhất, để khách không phải trình bày lại.
 
+Inbox dùng ba trạng thái vận hành: `open` là đang được AI hoặc nhân viên xử lý, `waiting` là đang chờ người và `resolved` là đã hoàn tất. `repository.py` còn tính `sales_intent`, `wait_seconds` và `sla_breached` để ca có khả năng tạo doanh thu nhưng đang chờ được đưa lên trước. Đây là một ví dụ về việc dùng AI cho hội thoại nhưng giữ logic ưu tiên bằng code có thể giải thích.
+
 ## 7. Confirmation guardrail
 
 Đặt hàng là write action vì nó thay đổi dữ liệu. Quy trình có hai bước:

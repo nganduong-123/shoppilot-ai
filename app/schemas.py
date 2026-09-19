@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -38,3 +38,25 @@ class ProductCreate(BaseModel):
     price: int = Field(ge=0)
     stock: int = Field(ge=0)
     attributes: dict[str, Any] = {}
+
+
+class WebChannelMessage(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    conversation_id: str | None = None
+    customer_id: str | None = Field(default=None, max_length=120)
+    customer_name: str | None = Field(default=None, max_length=120)
+
+
+class BotControlRequest(BaseModel):
+    enabled: bool
+    assigned_to: str | None = Field(default=None, max_length=120)
+
+
+class HumanReplyRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    agent_name: str = Field(default="Dương Thị Ngân", min_length=2, max_length=120)
+
+
+class InboxActionRequest(BaseModel):
+    action: Literal["takeover", "resolve", "reopen"]
+    agent_name: str = Field(default="Dương Thị Ngân", min_length=2, max_length=120)
