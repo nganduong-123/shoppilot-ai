@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -107,6 +107,7 @@ const chrome = spawn(chromePath, [
   "--disable-gpu",
   "--disable-extensions",
   "--hide-scrollbars",
+  "--window-size=1600,1000",
   "--no-first-run",
   "--no-default-browser-check",
   "--remote-allow-origins=*",
@@ -157,8 +158,19 @@ try {
   await client.evaluate(`document.querySelector("#bot-enabled").click()`);
   await waitFor(async () => !(await findConversation()).bot_enabled, "human takeover enabled");
 
-  const humanReply = `Nhân viên đã tiếp nhận ${marker}`;
-  await client.evaluate(`document.querySelector("#thread-reply-input").value=${JSON.stringify(humanReply)};document.querySelector("#thread-reply-form").requestSubmit()`);
+  await client.evaluate(`document.querySelector("#copilot-assist").click()`);
+  await waitFor(
+    () => client.evaluate(`!document.querySelector("#copilot-card").hidden && document.querySelector("#copilot-draft").textContent.length > 20`),
+    "copilot drafts grounded reply",
+  );
+  if (process.env.SHOPPILOT_CAPTURE) {
+    const screenshot = await client.send("Page.captureScreenshot", { format: "png" });
+    await writeFile(path.resolve(process.env.SHOPPILOT_CAPTURE), Buffer.from(screenshot.data, "base64"));
+  }
+  await client.evaluate(`document.querySelector("#use-copilot").click()`);
+  const humanReply = await client.evaluate(`document.querySelector("#thread-reply-input").value`);
+  if (!humanReply) throw new Error("Copilot draft was not inserted into the reply composer");
+  await client.evaluate(`document.querySelector("#thread-reply-form").requestSubmit()`);
   await waitFor(async () => {
     history = await api(`/api/channels/web/${shop}/conversations/${externalId}/messages`);
     return history.some(message => message.sender_type === "human" && message.content === humanReply);
@@ -228,6 +240,7 @@ try {
       "widget_to_ai",
       "unified_inbox",
       "human_takeover",
+      "human_copilot_draft",
       "human_reply_to_widget",
       "paused_ai_does_not_reply",
       "ai_resume",

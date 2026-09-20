@@ -17,6 +17,7 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Human handoff:** escalates complaints, exceptions and low-confidence cases with conversation context.
 - **Unified inbox:** Website and Messenger conversations share one queue, with an AI/human takeover switch.
 - **Revenue-rescue queue:** detects buying signals, flags unanswered handoffs, tracks a five-minute SLA and lets staff take or resolve each conversation.
+- **Human reply copilot:** summarizes the thread and drafts a grounded reply for staff review; it never sends a customer message automatically.
 - **Meta review readiness:** public privacy/terms pages plus a signed user-data deletion callback and status receipt.
 - **Embeddable web widget:** add a sales assistant to an existing store with one script tag.
 - **Auditable traces:** records every tool, arguments, result, latency and outcome.
@@ -105,8 +106,8 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **20 automated tests passed**
-- **9/9 browser E2E checks passed** across AI reply, priority inbox, human takeover, resolution workflow and integration readiness.
+- **21 automated tests passed**
+- **10/10 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution workflow and integration readiness.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
 - Coverage includes tenant isolation, product grounding, stock guard, explicit confirmation, prompt injection refusal and human handoff.
@@ -128,6 +129,7 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 | `POST` | `/api/shops/{slug}/inbox/conversations/{id}/bot` | Switch between AI and human handling |
 | `POST` | `/api/shops/{slug}/inbox/conversations/{id}/actions` | Take over, resolve or reopen an inbox conversation |
 | `POST` | `/api/shops/{slug}/inbox/conversations/{id}/read` | Mark inbound messages as read |
+| `POST` | `/api/shops/{slug}/inbox/conversations/{id}/assist` | Draft a grounded reply for human review without sending it |
 | `GET` | `/api/integrations/meta/status` | Read review URLs and configuration readiness without exposing secrets |
 | `POST` | `/api/meta/data-deletion` | Verify Meta's signed deletion request and remove user data |
 | `GET` | `/api/data-deletion/status/{code}` | Check an anonymous deletion receipt |
@@ -140,6 +142,7 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 ```text
 app/
 ├── agent.py          # Groq tool loop, state and fallback
+├── copilot.py        # Human-assist summaries and reply drafts
 ├── inbox.py          # Idempotent channel-to-agent orchestration
 ├── channels/         # Website and Meta Messenger adapters
 ├── tools.py          # Business tools and confirmation workflow

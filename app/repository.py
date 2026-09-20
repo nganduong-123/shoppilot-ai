@@ -655,6 +655,49 @@ class Repository:
             )
             return cursor.rowcount
 
+    def create_copilot_suggestion(
+        self,
+        conversation_id: str,
+        *,
+        summary: str,
+        suggested_reply: str,
+        model: str,
+        risk_flags: list[str],
+    ) -> dict[str, Any]:
+        with db_session() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO copilot_suggestions
+                    (channel_conversation_id, summary, suggested_reply, model,
+                     risk_flags_json, status, created_at)
+                VALUES (?, ?, ?, ?, ?, 'generated', ?)
+                """,
+                (
+                    conversation_id, summary, suggested_reply, model,
+                    json_dumps(risk_flags), utc_now(),
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM copilot_suggestions WHERE id = ?", (cursor.lastrowid,)
+            ).fetchone()
+            result = dict(row)
+            result["risk_flags"] = json_loads(result.pop("risk_flags_json"), [])
+            return result
+
+    def mark_copilot_suggestion_used(
+        self, suggestion_id: int, conversation_id: str
+    ) -> bool:
+        with db_session() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE copilot_suggestions
+                SET status = 'used', used_at = ?
+                WHERE id = ? AND channel_conversation_id = ? AND status = 'generated'
+                """,
+                (utc_now(), suggestion_id, conversation_id),
+            )
+            return cursor.rowcount == 1
+
     def delete_external_customer_data(
         self,
         *,
@@ -685,6 +728,11 @@ class Repository:
 
             if channel_ids:
                 placeholders = ",".join("?" for _ in channel_ids)
+                deleted_records += connection.execute(
+                    f"SELECT COUNT(*) FROM copilot_suggestions "
+                    f"WHERE channel_conversation_id IN ({placeholders})",
+                    channel_ids,
+                ).fetchone()[0]
                 deleted_records += connection.execute(
                     f"SELECT COUNT(*) FROM channel_messages "
                     f"WHERE channel_conversation_id IN ({placeholders})",

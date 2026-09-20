@@ -55,6 +55,7 @@ class BotControlRequest(BaseModel):
 class HumanReplyRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     agent_name: str = Field(default="Dương Thị Ngân", min_length=2, max_length=120)
+    suggestion_id: int | None = Field(default=None, ge=1)
 
 
 class InboxActionRequest(BaseModel):

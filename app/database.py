@@ -152,6 +152,18 @@ CREATE TABLE IF NOT EXISTS channel_events (
     UNIQUE(channel, external_event_id)
 );
 
+CREATE TABLE IF NOT EXISTS copilot_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_conversation_id TEXT NOT NULL REFERENCES channel_conversations(id) ON DELETE CASCADE,
+    summary TEXT NOT NULL,
+    suggested_reply TEXT NOT NULL,
+    model TEXT NOT NULL,
+    risk_flags_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'generated',
+    created_at TEXT NOT NULL,
+    used_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS data_deletion_requests (
     confirmation_code TEXT PRIMARY KEY,
     platform TEXT NOT NULL,
@@ -168,6 +180,8 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_conversation ON tool_calls(conversatio
 CREATE INDEX IF NOT EXISTS idx_channel_conversations_shop ON channel_conversations(shop_id, last_message_at);
 CREATE INDEX IF NOT EXISTS idx_channel_messages_conversation ON channel_messages(channel_conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_channel_events_status ON channel_events(status, received_at);
+CREATE INDEX IF NOT EXISTS idx_copilot_conversation
+    ON copilot_suggestions(channel_conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_data_deletion_status
     ON data_deletion_requests(status, requested_at);
 """

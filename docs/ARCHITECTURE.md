@@ -7,6 +7,7 @@ flowchart LR
     U[Khách hàng] --> C[Website / Messenger]
     C --> AD[Channel adapters]
     AD --> IB[Unified inbox]
+    IB --> CP[Human reply copilot]
     IB --> API[FastAPI]
     API --> TR[Tenant resolver]
     TR --> AG[Sales agent loop]
@@ -33,6 +34,7 @@ flowchart LR
 | `main.py` | HTTP API, validation và phục vụ giao diện |
 | `channels/` | Chuẩn hóa webhook từng nền tảng và gửi phản hồi |
 | `inbox.py` | Chống sự kiện trùng, lưu hội thoại, điều phối AI/người thật |
+| `copilot.py` | Tóm tắt hội thoại và soạn nháp có căn cứ để nhân viên duyệt |
 | `static/` | Console chat, catalog, metrics và live trace |
 
 ## Luồng omnichannel
@@ -47,6 +49,12 @@ flowchart LR
 8. Website trả lời trực tiếp qua HTTP. Messenger được tiếp nhận nhanh và xử lý trong background task.
 
 Priority là quy tắc minh bạch trong Python, không phải điểm số bí mật từ LLM. Vì vậy đội vận hành có thể giải thích tại sao một khách được đưa lên đầu hàng chờ và thay đổi ngưỡng SLA theo nhu cầu.
+
+## Human reply copilot
+
+Copilot đọc tối đa 16 tin nhắn gần nhất cùng catalog và chính sách của đúng shop. Groq trả về structured output gồm `summary`, `suggested_reply` và `risk_flags`; nếu API lỗi, một fallback xác định vẫn tạo bản nháp an toàn. Kết quả chỉ xuất hiện trong console nội bộ và không đi qua channel adapter.
+
+Nhân viên phải bấm **Chèn vào ô trả lời**, có thể sửa nội dung rồi mới bấm **Gửi**. Mỗi bản nháp được lưu với trạng thái `generated` hoặc `used` để sau này đo tỷ lệ chấp nhận. Cơ chế này giữ con người ở điểm quyết định cuối cùng và tránh để AI tự gửi lời hứa về giá, phí giao hoặc hoàn tiền.
 
 Background task trong tiến trình phù hợp cho bản demo. Bản production cần hàng đợi bền vững như Redis/Celery để không mất sự kiện khi máy chủ khởi động lại.
 

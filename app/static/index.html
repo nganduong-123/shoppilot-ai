@@ -108,14 +108,21 @@
               <header class="thread-head">
                 <div><strong id="thread-customer">Khách hàng</strong><small><span id="thread-channel">Website</span> · <span id="thread-status">AI đang xử lý</span></small></div>
                 <div class="thread-actions">
+                  <button type="button" class="workflow-button copilot-button" id="copilot-assist">✦ AI gợi ý</button>
                   <button type="button" class="workflow-button" id="takeover-conversation">Nhận xử lý</button>
                   <button type="button" class="workflow-button complete" id="resolve-conversation">Hoàn tất</button>
                   <label class="bot-toggle"><input type="checkbox" id="bot-enabled" checked><span></span><em id="bot-label">AI đang trả lời</em></label>
                 </div>
               </header>
               <div class="thread-messages" id="thread-messages"></div>
+              <aside class="copilot-card" id="copilot-card" hidden>
+                <header><div><span>SHOPPILOT COPILOT</span><strong>Bản nháp dành cho nhân viên</strong></div><button type="button" id="dismiss-copilot" aria-label="Đóng gợi ý">×</button></header>
+                <div class="copilot-summary"><small>Tóm tắt hội thoại</small><p id="copilot-summary"></p></div>
+                <div class="copilot-draft"><small>Câu trả lời đề xuất</small><p id="copilot-draft"></p></div>
+                <div class="copilot-foot"><div id="copilot-risks" class="copilot-risks"></div><button type="button" id="use-copilot">Chèn vào ô trả lời</button></div>
+              </aside>
               <form class="thread-composer" id="thread-reply-form"><input id="thread-reply-input" maxlength="2000" placeholder="Nhân viên nhập câu trả lời…"><button type="submit">Gửi</button></form>
-              <div class="handoff-note">Tắt AI để nhân viên tiếp quản. Lịch sử và ngữ cảnh vẫn được giữ nguyên.</div>
+              <div class="handoff-note">Copilot chỉ soạn nháp. Nhân viên luôn kiểm tra và chủ động nhấn gửi.</div>
             </div>
           </section>
         </div>

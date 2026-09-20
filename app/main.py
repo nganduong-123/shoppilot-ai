@@ -19,6 +19,7 @@ from app.channels.base import InboundMessage
 from app.channels.meta import MetaMessengerAdapter
 from app.channels.web import WebChannelAdapter
 from app.config import BASE_DIR, settings
+from app.copilot import inbox_copilot
 from app.database import init_database
 from app.inbox import inbox_service
 from app.repository import repository
@@ -326,6 +327,15 @@ def mark_inbox_conversation_read(slug: str, conversation_id: str) -> dict:
     return {"read": repository.mark_channel_messages_read(conversation_id)}
 
 
+@app.post("/api/shops/{slug}/inbox/conversations/{conversation_id}/assist")
+async def create_inbox_copilot_suggestion(slug: str, conversation_id: str) -> dict:
+    shop, conversation = require_channel_conversation(slug, conversation_id)
+    try:
+        return await inbox_copilot.suggest(shop, conversation)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/shops/{slug}/inbox/conversations/{conversation_id}/actions")
 def update_inbox_workflow(
     slug: str, conversation_id: str, payload: InboxActionRequest
@@ -378,9 +388,14 @@ async def send_inbox_reply(
     else:
         raise HTTPException(status_code=400, detail="Kênh chưa hỗ trợ gửi tin.")
     try:
-        return await inbox_service.reply_as_human(
+        message = await inbox_service.reply_as_human(
             conversation, payload.message.strip(), payload.agent_name, adapter
         )
+        if payload.suggestion_id:
+            message["copilot_used"] = repository.mark_copilot_suggestion_used(
+                payload.suggestion_id, conversation_id
+            )
+        return message
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="Nền tảng từ chối gửi tin nhắn.") from exc
 

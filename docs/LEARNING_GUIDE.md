@@ -52,6 +52,8 @@ AI xử lý việc lặp lại; người thật xử lý khiếu nại, ngoại 
 
 Inbox dùng ba trạng thái vận hành: `open` là đang được AI hoặc nhân viên xử lý, `waiting` là đang chờ người và `resolved` là đã hoàn tất. `repository.py` còn tính `sales_intent`, `wait_seconds` và `sla_breached` để ca có khả năng tạo doanh thu nhưng đang chờ được đưa lên trước. Đây là một ví dụ về việc dùng AI cho hội thoại nhưng giữ logic ưu tiên bằng code có thể giải thích.
 
+`copilot.py` hỗ trợ người thật sau khi handoff. Nó đưa transcript, catalog và policy của đúng shop vào prompt, yêu cầu JSON có cấu trúc rồi kiểm tra kết quả trước khi hiển thị. Copilot không gọi channel adapter nên không thể tự gửi. Nhân viên phải chèn bản nháp vào composer và nhấn gửi; hệ thống mới đánh dấu gợi ý là `used`.
+
 ## 7. Confirmation guardrail
 
 Đặt hàng là write action vì nó thay đổi dữ liệu. Quy trình có hai bước:
