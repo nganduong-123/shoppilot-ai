@@ -47,6 +47,14 @@ class WebChannelMessage(BaseModel):
     customer_name: str | None = Field(default=None, max_length=120)
 
 
+class MakeMessengerMessage(BaseModel):
+    event_id: str = Field(min_length=1, max_length=200)
+    sender_id: str = Field(min_length=1, max_length=200)
+    message: str = Field(min_length=1, max_length=2000)
+    page_id: str = Field(default="make-page", min_length=1, max_length=200)
+    customer_name: str | None = Field(default=None, max_length=120)
+
+
 class BotControlRequest(BaseModel):
     enabled: bool
     assigned_to: str | None = Field(default=None, max_length=120)

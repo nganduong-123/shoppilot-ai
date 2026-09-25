@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.agent import sales_agent
 from app.channels.base import InboundMessage
+from app.channels.make import MakeMessengerAdapter
 from app.channels.meta import MetaMessengerAdapter
 from app.channels.web import WebChannelAdapter
 from app.config import BASE_DIR, settings
@@ -27,6 +28,7 @@ from app.schemas import (
     BotControlRequest,
     ChatRequest,
     ChatResponse,
+    MakeMessengerMessage,
     InboxActionRequest,
     ProductCreate,
     HumanReplyRequest,
@@ -83,6 +85,9 @@ def data_deletion_page() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict:
+    direct_messenger = MetaMessengerAdapter().configured
+    make_adapter = MakeMessengerAdapter()
+    make_messenger = make_adapter.inbound_configured and make_adapter.outbound_configured
     return {
         "status": "ok",
         "version": settings.app_version,
@@ -90,7 +95,7 @@ def health() -> dict:
         "model": settings.groq_model if settings.groq_api_key else "rule-fallback",
         "channels": {
             "web": True,
-            "messenger": MetaMessengerAdapter().configured,
+            "messenger": direct_messenger or make_messenger,
         },
     }
 
@@ -114,6 +119,19 @@ def meta_integration_status() -> dict:
             "data_deletion": f"{public_url}/data-deletion",
             "data_deletion_callback": f"{public_url}/api/meta/data-deletion",
         },
+    }
+
+
+@app.get("/api/integrations/make/status")
+def make_integration_status() -> dict:
+    public_url = settings.public_base_url.rstrip("/")
+    adapter = MakeMessengerAdapter()
+    return {
+        "configured": adapter.inbound_configured and adapter.outbound_configured,
+        "inbound_configured": adapter.inbound_configured,
+        "outbound_configured": adapter.outbound_configured,
+        "inbound_url": f"{public_url}/api/bridges/make/messenger/{settings.meta_shop_slug}",
+        "auth_header": "X-ShopPilot-Bridge-Key",
     }
 
 
@@ -220,6 +238,43 @@ async def web_channel_message(slug: str, payload: WebChannelMessage) -> dict:
     result = await inbox_service.process(shop, inbound, WebChannelAdapter())
     result["conversation_id"] = external_conversation_id
     return result
+
+
+@app.post("/api/bridges/make/messenger/{slug}")
+async def make_messenger_message(
+    slug: str, payload: MakeMessengerMessage, request: Request
+) -> dict:
+    adapter = MakeMessengerAdapter(response_only=True)
+    if not adapter.inbound_configured:
+        raise HTTPException(status_code=503, detail="Cầu nối Make chưa được cấu hình.")
+    supplied_key = request.headers.get("X-ShopPilot-Bridge-Key", "")
+    if not secrets.compare_digest(supplied_key, settings.make_bridge_secret or ""):
+        raise HTTPException(status_code=401, detail="Khóa cầu nối Make không hợp lệ.")
+
+    shop = require_shop(slug)
+    connection = repository.upsert_channel_connection(
+        shop["id"],
+        "messenger",
+        payload.page_id,
+        f"Messenger via Make · {payload.page_id}",
+    )
+    inbound = InboundMessage(
+        channel="messenger",
+        external_event_id=f"make:{payload.event_id}",
+        external_conversation_id=f"{payload.page_id}:{payload.sender_id}",
+        external_customer_id=payload.sender_id,
+        customer_name=payload.customer_name,
+        text=payload.message.strip(),
+        metadata={"source": "make", "page_id": payload.page_id},
+    )
+    result = await inbox_service.process(shop, inbound, adapter, connection["id"])
+    return {
+        "status": result["status"],
+        "replied": result.get("replied", False),
+        "recipient_id": payload.sender_id,
+        "reply": result.get("message"),
+        "channel_conversation_id": result.get("channel_conversation_id"),
+    }
 
 
 @app.get("/api/channels/web/{slug}/conversations/{external_id}/messages")
@@ -380,9 +435,17 @@ async def send_inbox_reply(
 ) -> dict:
     _, conversation = require_channel_conversation(slug, conversation_id)
     if conversation["channel"] == "messenger":
-        adapter = MetaMessengerAdapter()
-        if not adapter.configured:
-            raise HTTPException(status_code=503, detail="Kênh Messenger chưa được cấu hình.")
+        if conversation.get("metadata", {}).get("source") == "make":
+            adapter = MakeMessengerAdapter()
+            if not adapter.outbound_configured:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Webhook gửi ra của Make chưa được cấu hình.",
+                )
+        else:
+            adapter = MetaMessengerAdapter()
+            if not adapter.configured:
+                raise HTTPException(status_code=503, detail="Kênh Messenger chưa được cấu hình.")
     elif conversation["channel"] == "web":
         adapter = WebChannelAdapter()
     else:

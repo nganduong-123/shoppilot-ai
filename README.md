@@ -19,6 +19,7 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Revenue-rescue queue:** detects buying signals, flags unanswered handoffs, tracks a five-minute SLA and lets staff take or resolve each conversation.
 - **Human reply copilot:** summarizes the thread and drafts a grounded reply for staff review; it never sends a customer message automatically.
 - **Meta review readiness:** public privacy/terms pages plus a signed user-data deletion callback and status receipt.
+- **Optional Make bridge:** connects a pilot Messenger Page while direct Meta App access is pending.
 - **Embeddable web widget:** add a sales assistant to an existing store with one script tag.
 - **Auditable traces:** records every tool, arguments, result, latency and outcome.
 - **Resilient fallback:** core flows continue when the LLM provider is unavailable.
@@ -106,7 +107,7 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **21 automated tests passed**
+- **23 automated tests passed**
 - **10/10 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution workflow and integration readiness.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
@@ -123,6 +124,8 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 | `POST` | `/api/shops/{slug}/chat` | Run the sales agent |
 | `POST` | `/api/channels/web/{slug}/messages` | Receive a website-widget message |
 | `GET/POST` | `/api/webhooks/meta` | Verify and receive Messenger webhooks |
+| `POST` | `/api/bridges/make/messenger/{slug}` | Receive a Messenger message from Make |
+| `GET` | `/api/integrations/make/status` | Read Make bridge readiness and its inbound URL |
 | `GET` | `/api/shops/{slug}/inbox/conversations` | List unified inbox conversations |
 | `GET` | `/api/shops/{slug}/inbox/conversations/{id}/messages` | Read a channel thread |
 | `POST` | `/api/shops/{slug}/inbox/conversations/{id}/messages` | Reply as a human agent |
@@ -181,6 +184,8 @@ This repository is a portfolio MVP. Catalog, shipping rules and order fulfillmen
 For a local preview, open <http://127.0.0.1:8000/static/widget.html?shop=mint-fashion>.
 
 Messenger setup: [docs/META_SETUP.md](docs/META_SETUP.md).
+
+Fast Messenger pilot through Make: [docs/MAKE_MESSENGER_SETUP.md](docs/MAKE_MESSENGER_SETUP.md).
 
 Public review pages are available at `/privacy`, `/terms` and `/data-deletion`.
 
