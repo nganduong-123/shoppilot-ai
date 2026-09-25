@@ -33,7 +33,7 @@ META_APP_ID=
 META_APP_SECRET=
 META_PAGE_ACCESS_TOKEN=
 META_VERIFY_TOKEN=
-META_GRAPH_API_VERSION=v25.0
+META_GRAPH_API_VERSION=v26.0
 ```
 
 `META_VERIFY_TOKEN` nên là chuỗi ngẫu nhiên dài. Không gửi `META_APP_SECRET` hoặc `META_PAGE_ACCESS_TOKEN` qua chat, ảnh chụp màn hình hay issue GitHub.

@@ -27,7 +27,7 @@ class Settings:
     meta_app_secret: str | None = os.getenv("META_APP_SECRET")
     meta_page_access_token: str | None = os.getenv("META_PAGE_ACCESS_TOKEN")
     meta_verify_token: str | None = os.getenv("META_VERIFY_TOKEN")
-    meta_graph_api_version: str = os.getenv("META_GRAPH_API_VERSION", "v25.0")
+    meta_graph_api_version: str = os.getenv("META_GRAPH_API_VERSION", "v26.0")
     make_bridge_secret: str | None = os.getenv("MAKE_BRIDGE_SECRET")
     make_messenger_outbound_webhook_url: str | None = os.getenv(
         "MAKE_MESSENGER_OUTBOUND_WEBHOOK_URL"
