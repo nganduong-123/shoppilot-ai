@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+import hashlib
+from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
-from app.database import db_session, json_dumps, json_loads, row_to_dict, utc_now
+from app.database import (
+    db_session,
+    is_integrity_error,
+    is_unique_violation,
+    json_dumps,
+    json_loads,
+    row_to_dict,
+    utc_now,
+)
 
 
 def _hydrate_product(row: Any) -> dict[str, Any]:
@@ -20,7 +31,185 @@ def _hydrate_conversation(row: Any) -> dict[str, Any]:
     return conversation
 
 
+def _json_contains_exact(value: Any, needle: str) -> bool:
+    if isinstance(value, dict):
+        return any(_json_contains_exact(item, needle) for item in value.values())
+    if isinstance(value, list):
+        return any(_json_contains_exact(item, needle) for item in value)
+    return str(value) == needle if value is not None else False
+
+
+BUYING_SIGNALS = (
+    "mua", "chốt", "đặt", "lấy", "còn hàng", "còn size", "giá bao nhiêu",
+    "phí ship", "giao hàng", "thanh toán", "tư vấn",
+)
+
+
+def _inbox_attention(item: dict[str, Any]) -> dict[str, Any]:
+    """Derive an explainable sales-priority snapshot from persisted inbox state."""
+    if item["status"] == "resolved":
+        return {
+            "priority": "resolved",
+            "needs_attention": False,
+            "sales_intent": False,
+            "wait_seconds": 0,
+            "sla_breached": False,
+        }
+
+    inbound_text = (item.get("last_inbound_message") or "").casefold()
+    sales_intent = any(signal in inbound_text for signal in BUYING_SIGNALS)
+    waiting_for_human = item["status"] == "waiting" or (
+        not item["bot_enabled"] and item.get("last_direction") == "inbound"
+    )
+    wait_seconds = 0
+    if waiting_for_human and item.get("last_inbound_at"):
+        try:
+            started = datetime.fromisoformat(item["last_inbound_at"])
+            wait_seconds = max(0, int((datetime.now(UTC) - started).total_seconds()))
+        except (TypeError, ValueError):
+            wait_seconds = 0
+
+    sla_breached = waiting_for_human and wait_seconds >= 300
+    if sla_breached or (waiting_for_human and sales_intent):
+        priority = "urgent"
+    elif waiting_for_human or sales_intent:
+        priority = "high"
+    else:
+        priority = "normal"
+    return {
+        "priority": priority,
+        "needs_attention": waiting_for_human,
+        "sales_intent": sales_intent,
+        "wait_seconds": wait_seconds,
+        "sla_breached": sla_breached,
+    }
+
+
+def _inbox_sort_key(item: dict[str, Any]) -> tuple[int, float]:
+    rank = {"urgent": 0, "high": 1, "normal": 2, "resolved": 3}[item["priority"]]
+    raw_time = item.get("last_inbound_at") or item["last_message_at"]
+    try:
+        timestamp = datetime.fromisoformat(raw_time).timestamp()
+    except (TypeError, ValueError):
+        timestamp = 0.0
+    # The oldest waiting customer comes first; other queues retain newest-first behavior.
+    return rank, timestamp if item["needs_attention"] else -timestamp
+
+
 class Repository:
+    def create_user_with_shop(
+        self,
+        *,
+        email: str,
+        display_name: str,
+        password_hash: str,
+        shop: dict[str, Any],
+    ) -> dict[str, Any]:
+        user_id = str(uuid4())
+        now = utc_now()
+        with db_session() as connection:
+            connection.execute(
+                """
+                INSERT INTO users
+                    (id, email, display_name, password_hash, status, created_at)
+                VALUES (?, ?, ?, ?, 'active', ?)
+                """,
+                (user_id, email, display_name, password_hash, now),
+            )
+            cursor = connection.execute(
+                """
+                INSERT INTO shops
+                    (slug, name, category, tagline, policy_text, voice, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    shop["slug"], shop["name"], shop["category"], shop["tagline"],
+                    shop["policy_text"], shop["voice"], now,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO shop_members (shop_id, user_id, role, created_at)
+                VALUES (?, ?, 'owner', ?)
+                """,
+                (cursor.lastrowid, user_id, now),
+            )
+            row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            return dict(row)
+
+    def get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE email = ?", (email,)
+            ).fetchone()
+            return row_to_dict(row)
+
+    def create_auth_session(self, user_id: str, token_hash: str, expires_at: str) -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                INSERT INTO auth_sessions (id, user_id, token_hash, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (str(uuid4()), user_id, token_hash, expires_at, utc_now()),
+            )
+
+    def get_user_by_session(self, token_hash: str, now: str) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT u.id, u.email, u.display_name, u.status, u.created_at
+                FROM auth_sessions s
+                JOIN users u ON u.id = s.user_id
+                WHERE s.token_hash = ? AND s.expires_at > ? AND u.status = 'active'
+                """,
+                (token_hash, now),
+            ).fetchone()
+            return row_to_dict(row)
+
+    def delete_auth_session(self, token_hash: str) -> None:
+        with db_session() as connection:
+            connection.execute("DELETE FROM auth_sessions WHERE token_hash = ?", (token_hash,))
+
+    def list_user_shops(self, user_id: str) -> list[dict[str, Any]]:
+        with db_session() as connection:
+            rows = connection.execute(
+                """
+                SELECT s.*, sm.role, COUNT(p.id) AS product_count,
+                       COALESCE(SUM(p.stock), 0) AS total_stock
+                FROM shop_members sm
+                JOIN shops s ON s.id = sm.shop_id
+                LEFT JOIN products p ON p.shop_id = s.id AND p.active = 1
+                WHERE sm.user_id = ?
+                GROUP BY s.id, sm.role
+                ORDER BY s.id
+                """,
+                (user_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_shop_member(self, shop_id: int, user_id: str) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT shop_id, user_id, role, created_at
+                FROM shop_members WHERE shop_id = ? AND user_id = ?
+                """,
+                (shop_id, user_id),
+            ).fetchone()
+            return row_to_dict(row)
+
+    def add_shop_member(self, shop_id: int, user_id: str, role: str = "owner") -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                INSERT INTO shop_members (shop_id, user_id, role, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(shop_id, user_id) DO UPDATE SET role = excluded.role
+                """,
+                (shop_id, user_id, role, utc_now()),
+            )
+
     def list_shops(self) -> list[dict[str, Any]]:
         with db_session() as connection:
             rows = connection.execute(
@@ -38,6 +227,11 @@ class Repository:
     def get_shop(self, slug: str) -> dict[str, Any] | None:
         with db_session() as connection:
             row = connection.execute("SELECT * FROM shops WHERE slug = ?", (slug,)).fetchone()
+            return row_to_dict(row)
+
+    def get_shop_by_id(self, shop_id: int) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute("SELECT * FROM shops WHERE id = ?", (shop_id,)).fetchone()
             return row_to_dict(row)
 
     def create_shop(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -265,6 +459,584 @@ class Repository:
             100 * (conversations - data["handoffs"]) / conversations, 1
         ) if conversations else 100.0
         return data
+
+    def upsert_channel_connection(
+        self,
+        shop_id: int,
+        channel: str,
+        external_account_id: str,
+        display_name: str,
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        with db_session() as connection:
+            connection.execute(
+                """
+                INSERT INTO channel_connections
+                    (shop_id, channel, external_account_id, display_name, config_json,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(shop_id, channel, external_account_id) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    config_json = excluded.config_json,
+                    status = 'active',
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    shop_id, channel, external_account_id, display_name,
+                    json_dumps(config or {}), now, now,
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT * FROM channel_connections
+                WHERE shop_id = ? AND channel = ? AND external_account_id = ?
+                """,
+                (shop_id, channel, external_account_id),
+            ).fetchone()
+            result = dict(row)
+            result["config"] = json_loads(result.pop("config_json"))
+            return result
+
+    def get_channel_connection(self, connection_id: int) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                "SELECT * FROM channel_connections WHERE id = ?", (connection_id,)
+            ).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["config"] = json_loads(result.pop("config_json"))
+            return result
+
+    def get_channel_connection_by_external(
+        self, channel: str, external_account_id: str
+    ) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM channel_connections
+                WHERE channel = ? AND external_account_id = ? AND status = 'active'
+                """,
+                (channel, external_account_id),
+            ).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["config"] = json_loads(result.pop("config_json"))
+            return result
+
+    def list_channel_connections(
+        self, shop_id: int, channel: str | None = None
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM channel_connections WHERE shop_id = ?"
+        params: list[Any] = [shop_id]
+        if channel:
+            query += " AND channel = ?"
+            params.append(channel)
+        query += " ORDER BY id"
+        with db_session() as connection:
+            rows = connection.execute(query, params).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["config"] = json_loads(item.pop("config_json"))
+                result.append(item)
+            return result
+
+    def create_meta_oauth_state(
+        self, state_hash: str, user_id: str, shop_id: int, expires_at: str
+    ) -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                INSERT INTO meta_oauth_states
+                    (state_hash, user_id, shop_id, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (state_hash, user_id, shop_id, expires_at, utc_now()),
+            )
+
+    def set_meta_oauth_candidates(self, state_hash: str, candidates: list[dict[str, Any]]) -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                UPDATE meta_oauth_states SET candidates_json = ?
+                WHERE state_hash = ? AND used_at IS NULL
+                """,
+                (json_dumps(candidates), state_hash),
+            )
+
+    def get_meta_oauth_state(
+        self, state_hash: str, user_id: str, now: str
+    ) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM meta_oauth_states
+                WHERE state_hash = ? AND user_id = ? AND expires_at > ? AND used_at IS NULL
+                """,
+                (state_hash, user_id, now),
+            ).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["candidates"] = json_loads(result.pop("candidates_json"), [])
+            return result
+
+    def consume_meta_oauth_state(self, state_hash: str) -> None:
+        with db_session() as connection:
+            connection.execute(
+                "UPDATE meta_oauth_states SET used_at = ? WHERE state_hash = ?",
+                (utc_now(), state_hash),
+            )
+
+    def record_channel_event(
+        self,
+        shop_id: int,
+        channel: str,
+        external_event_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> bool:
+        try:
+            with db_session() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO channel_events
+                        (shop_id, channel, external_event_id, event_type, payload_json,
+                         status, received_at)
+                    VALUES (?, ?, ?, ?, ?, 'received', ?)
+                    """,
+                    (
+                        shop_id, channel, external_event_id, event_type,
+                        json_dumps(payload), utc_now(),
+                    ),
+                )
+            return True
+        except Exception as exc:
+            # A repeated platform webhook must not create a second reply.
+            if is_unique_violation(exc):
+                return False
+            if not is_integrity_error(exc):
+                raise
+            raise
+
+    def mark_channel_event(
+        self, channel: str, external_event_id: str, status: str, error: str | None = None
+    ) -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                UPDATE channel_events
+                SET status = ?, error_text = ?, processed_at = ?
+                WHERE channel = ? AND external_event_id = ?
+                """,
+                (status, error, utc_now(), channel, external_event_id),
+            )
+
+    def get_or_create_channel_conversation(
+        self,
+        *,
+        shop_id: int,
+        connection_id: int | None,
+        channel: str,
+        external_conversation_id: str,
+        external_customer_id: str,
+        customer_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM channel_conversations
+                WHERE shop_id = ? AND channel = ? AND external_conversation_id = ?
+                """,
+                (shop_id, channel, external_conversation_id),
+            ).fetchone()
+            if not row:
+                internal_id = str(uuid4())
+                channel_id = str(uuid4())
+                connection.execute(
+                    """
+                    INSERT INTO conversations
+                        (id, shop_id, customer_name, status, context_json, created_at, updated_at)
+                    VALUES (?, ?, ?, 'active', '{}', ?, ?)
+                    """,
+                    (internal_id, shop_id, customer_name, now, now),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO channel_conversations
+                        (id, shop_id, connection_id, channel, external_conversation_id,
+                         external_customer_id, customer_name, internal_conversation_id,
+                         metadata_json, last_message_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        channel_id, shop_id, connection_id, channel,
+                        external_conversation_id, external_customer_id, customer_name,
+                        internal_id, json_dumps(metadata or {}), now, now, now,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM channel_conversations WHERE id = ?", (channel_id,)
+                ).fetchone()
+            elif row["status"] == "resolved":
+                connection.execute(
+                    """
+                    UPDATE channel_conversations
+                    SET status = 'open', updated_at = ? WHERE id = ?
+                    """,
+                    (now, row["id"]),
+                )
+                row = connection.execute(
+                    "SELECT * FROM channel_conversations WHERE id = ?", (row["id"],)
+                ).fetchone()
+            result = dict(row)
+            result["bot_enabled"] = bool(result["bot_enabled"])
+            result["metadata"] = json_loads(result.pop("metadata_json"))
+            return result
+
+    def add_channel_message(
+        self,
+        channel_conversation_id: str,
+        *,
+        external_message_id: str | None,
+        direction: str,
+        sender_type: str,
+        content: str,
+        status: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        with db_session() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO channel_messages
+                    (channel_conversation_id, external_message_id, direction, sender_type,
+                     content, status, metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    channel_conversation_id, external_message_id, direction, sender_type,
+                    content, status, json_dumps(metadata or {}), now,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE channel_conversations
+                SET last_message_at = ?, updated_at = ? WHERE id = ?
+                """,
+                (now, now, channel_conversation_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM channel_messages WHERE id = ?", (cursor.lastrowid,)
+            ).fetchone()
+            result = dict(row)
+            result["metadata"] = json_loads(result.pop("metadata_json"))
+            return result
+
+    def list_channel_conversations(self, shop_id: int, limit: int = 100) -> list[dict[str, Any]]:
+        with db_session() as connection:
+            rows = connection.execute(
+                """
+                SELECT cc.*,
+                       (SELECT content FROM channel_messages cm
+                        WHERE cm.channel_conversation_id = cc.id
+                        ORDER BY cm.id DESC LIMIT 1) AS last_message,
+                       (SELECT COUNT(*) FROM channel_messages cm
+                        WHERE cm.channel_conversation_id = cc.id
+                          AND cm.direction = 'inbound' AND cm.status = 'received') AS unread_count
+                       ,(SELECT direction FROM channel_messages cm
+                         WHERE cm.channel_conversation_id = cc.id
+                         ORDER BY cm.id DESC LIMIT 1) AS last_direction
+                       ,(SELECT content FROM channel_messages cm
+                         WHERE cm.channel_conversation_id = cc.id
+                           AND cm.direction = 'inbound'
+                         ORDER BY cm.id DESC LIMIT 1) AS last_inbound_message
+                       ,(SELECT created_at FROM channel_messages cm
+                         WHERE cm.channel_conversation_id = cc.id
+                           AND cm.direction = 'inbound'
+                         ORDER BY cm.id DESC LIMIT 1) AS last_inbound_at
+                FROM channel_conversations cc
+                WHERE cc.shop_id = ?
+                ORDER BY
+                    CASE cc.status WHEN 'waiting' THEN 0 WHEN 'open' THEN 1 ELSE 2 END,
+                    cc.last_message_at DESC LIMIT ?
+                """,
+                (shop_id, limit),
+            ).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["bot_enabled"] = bool(item["bot_enabled"])
+                item["metadata"] = json_loads(item.pop("metadata_json"))
+                item.update(_inbox_attention(item))
+                result.append(item)
+            result.sort(key=_inbox_sort_key)
+            return result
+
+    def get_channel_conversation(self, conversation_id: str) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                "SELECT * FROM channel_conversations WHERE id = ?", (conversation_id,)
+            ).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["bot_enabled"] = bool(result["bot_enabled"])
+            result["metadata"] = json_loads(result.pop("metadata_json"))
+            return result
+
+    def get_channel_conversation_by_external(
+        self, shop_id: int, channel: str, external_conversation_id: str
+    ) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM channel_conversations
+                WHERE shop_id = ? AND channel = ? AND external_conversation_id = ?
+                """,
+                (shop_id, channel, external_conversation_id),
+            ).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["bot_enabled"] = bool(result["bot_enabled"])
+            result["metadata"] = json_loads(result.pop("metadata_json"))
+            return result
+
+    def list_channel_messages(self, conversation_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        with db_session() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM (
+                    SELECT * FROM channel_messages WHERE channel_conversation_id = ?
+                    ORDER BY id DESC LIMIT ?
+                ) ORDER BY id
+                """,
+                (conversation_id, limit),
+            ).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["metadata"] = json_loads(item.pop("metadata_json"))
+                result.append(item)
+            return result
+
+    def set_channel_bot(
+        self, conversation_id: str, enabled: bool, assigned_to: str | None
+    ) -> dict[str, Any] | None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                UPDATE channel_conversations
+                SET bot_enabled = ?, assigned_to = ?,
+                    status = ?, updated_at = ? WHERE id = ?
+                """,
+                (
+                    int(enabled), assigned_to,
+                    "open" if enabled or assigned_to else "waiting",
+                    utc_now(), conversation_id,
+                ),
+            )
+        return self.get_channel_conversation(conversation_id)
+
+    def update_channel_workflow(
+        self,
+        conversation_id: str,
+        *,
+        status: str,
+        assigned_to: str | None,
+        bot_enabled: bool,
+    ) -> dict[str, Any] | None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                UPDATE channel_conversations
+                SET status = ?, assigned_to = ?, bot_enabled = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, assigned_to, int(bot_enabled), utc_now(), conversation_id),
+            )
+        return self.get_channel_conversation(conversation_id)
+
+    def mark_channel_messages_read(self, conversation_id: str) -> int:
+        with db_session() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE channel_messages SET status = 'read'
+                WHERE channel_conversation_id = ?
+                  AND direction = 'inbound' AND status = 'received'
+                """,
+                (conversation_id,),
+            )
+            return cursor.rowcount
+
+    def create_copilot_suggestion(
+        self,
+        conversation_id: str,
+        *,
+        summary: str,
+        suggested_reply: str,
+        model: str,
+        risk_flags: list[str],
+    ) -> dict[str, Any]:
+        with db_session() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO copilot_suggestions
+                    (channel_conversation_id, summary, suggested_reply, model,
+                     risk_flags_json, status, created_at)
+                VALUES (?, ?, ?, ?, ?, 'generated', ?)
+                """,
+                (
+                    conversation_id, summary, suggested_reply, model,
+                    json_dumps(risk_flags), utc_now(),
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM copilot_suggestions WHERE id = ?", (cursor.lastrowid,)
+            ).fetchone()
+            result = dict(row)
+            result["risk_flags"] = json_loads(result.pop("risk_flags_json"), [])
+            return result
+
+    def mark_copilot_suggestion_used(
+        self, suggestion_id: int, conversation_id: str
+    ) -> bool:
+        with db_session() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE copilot_suggestions
+                SET status = 'used', used_at = ?
+                WHERE id = ? AND channel_conversation_id = ? AND status = 'generated'
+                """,
+                (utc_now(), suggestion_id, conversation_id),
+            )
+            return cursor.rowcount == 1
+
+    def delete_external_customer_data(
+        self,
+        *,
+        channel: str,
+        external_customer_id: str,
+        confirmation_code: str,
+    ) -> dict[str, Any]:
+        """Delete channel data for one platform user and keep an anonymous audit receipt."""
+        now = utc_now()
+        external_user_hash = hashlib.sha256(
+            f"{channel}:{external_customer_id}".encode("utf-8")
+        ).hexdigest()
+        deleted_records = 0
+
+        with db_session() as connection:
+            channel_rows = connection.execute(
+                """
+                SELECT id, internal_conversation_id
+                FROM channel_conversations
+                WHERE channel = ? AND external_customer_id = ?
+                """,
+                (channel, external_customer_id),
+            ).fetchall()
+            channel_ids = [row["id"] for row in channel_rows]
+            conversation_ids = list(
+                dict.fromkeys(row["internal_conversation_id"] for row in channel_rows)
+            )
+
+            if channel_ids:
+                placeholders = ",".join("?" for _ in channel_ids)
+                deleted_records += connection.execute(
+                    f"SELECT COUNT(*) FROM copilot_suggestions "
+                    f"WHERE channel_conversation_id IN ({placeholders})",
+                    channel_ids,
+                ).fetchone()[0]
+                deleted_records += connection.execute(
+                    f"SELECT COUNT(*) FROM channel_messages "
+                    f"WHERE channel_conversation_id IN ({placeholders})",
+                    channel_ids,
+                ).fetchone()[0]
+                deleted_records += len(channel_ids)
+
+            if conversation_ids:
+                placeholders = ",".join("?" for _ in conversation_ids)
+                for table in ("messages", "tool_calls", "draft_orders", "handoffs"):
+                    deleted_records += connection.execute(
+                        f"SELECT COUNT(*) FROM {table} "
+                        f"WHERE conversation_id IN ({placeholders})",
+                        conversation_ids,
+                    ).fetchone()[0]
+                deleted_records += len(conversation_ids)
+
+                connection.execute(
+                    f"DELETE FROM draft_orders WHERE conversation_id IN ({placeholders})",
+                    conversation_ids,
+                )
+                connection.execute(
+                    f"DELETE FROM handoffs WHERE conversation_id IN ({placeholders})",
+                    conversation_ids,
+                )
+                # messages, tool calls, channel conversations and channel messages cascade.
+                connection.execute(
+                    f"DELETE FROM conversations WHERE id IN ({placeholders})",
+                    conversation_ids,
+                )
+
+            event_rows = connection.execute(
+                "SELECT id, payload_json FROM channel_events WHERE channel = ?",
+                (channel,),
+            ).fetchall()
+            event_ids = [
+                row["id"]
+                for row in event_rows
+                if _json_contains_exact(json_loads(row["payload_json"]), external_customer_id)
+            ]
+            if event_ids:
+                placeholders = ",".join("?" for _ in event_ids)
+                connection.execute(
+                    f"DELETE FROM channel_events WHERE id IN ({placeholders})", event_ids
+                )
+                deleted_records += len(event_ids)
+
+            connection.execute(
+                """
+                INSERT INTO data_deletion_requests
+                    (confirmation_code, platform, external_user_hash, deleted_records,
+                     status, requested_at, completed_at)
+                VALUES (?, ?, ?, ?, 'completed', ?, ?)
+                """,
+                (
+                    confirmation_code,
+                    channel,
+                    external_user_hash,
+                    deleted_records,
+                    now,
+                    now,
+                ),
+            )
+
+        return {
+            "confirmation_code": confirmation_code,
+            "status": "completed",
+            "deleted_records": deleted_records,
+            "requested_at": now,
+            "completed_at": now,
+        }
+
+    def get_data_deletion_status(self, confirmation_code: str) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT confirmation_code, platform, deleted_records, status,
+                       requested_at, completed_at
+                FROM data_deletion_requests
+                WHERE confirmation_code = ?
+                """,
+                (confirmation_code,),
+            ).fetchone()
+            return row_to_dict(row)
 
 
 repository = Repository()

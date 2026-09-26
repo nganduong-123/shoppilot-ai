@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: shoppilot-ai
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: REGISTRATION_ENABLED
+        value: "true"
+      - key: TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-20b
+      - key: META_SHOP_SLUG
+        value: mint-fashion
+      - key: META_PAGE_ID
+        sync: false
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_PAGE_ACCESS_TOKEN
+        sync: false
+      - key: META_VERIFY_TOKEN
+        sync: false
+      - key: META_GRAPH_API_VERSION
+        value: v26.0
+      - key: MAKE_BRIDGE_SECRET
+        generateValue: true
+      - key: MAKE_MESSENGER_OUTBOUND_WEBHOOK_URL
+        sync: false

@@ -6,7 +6,7 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 
 > Portfolio project by **Dương Thị Ngân** · Student ID **2A202602808**
 
-![ShopPilot AI dashboard](docs/images/dashboard.png)
+![ShopPilot AI omnichannel inbox](docs/images/omnichannel-inbox.png)
 
 ## What makes it different
 
@@ -15,15 +15,25 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Grounded answers:** prices, stock and policy evidence come from business data instead of model memory.
 - **Safe write workflow:** draft order → explicit customer confirmation → final inventory check → stock update.
 - **Human handoff:** escalates complaints, exceptions and low-confidence cases with conversation context.
+- **Unified inbox:** Website and Messenger conversations share one queue, with an AI/human takeover switch.
+- **Revenue-rescue queue:** detects buying signals, flags unanswered handoffs, tracks a five-minute SLA and lets staff take or resolve each conversation.
+- **Human reply copilot:** summarizes the thread and drafts a grounded reply for staff review; it never sends a customer message automatically.
+- **Meta review readiness:** public privacy/terms pages plus a signed user-data deletion callback and status receipt.
+- **Secure shop accounts:** scrypt password hashing, HttpOnly sessions and owner/manager/agent tenant boundaries.
+- **Meta OAuth onboarding:** owners authorize on Meta, select a Page and store only an encrypted Page token; ShopPilot never receives a Facebook password.
+- **Optional Make bridge:** connects a pilot Messenger Page while direct Meta App access is pending.
+- **Embeddable web widget:** add a sales assistant to an existing store with one script tag.
 - **Auditable traces:** records every tool, arguments, result, latency and outcome.
 - **Resilient fallback:** core flows continue when the LLM provider is unavailable.
 - **Evaluation-first:** automated tests plus a separate scenario suite for routing and safety behavior.
+
+![ShopPilot AI integration readiness](docs/images/integrations.png)
 
 ## Demo workspaces
 
 | Shop | Vertical | Domain-specific attributes |
 |---|---|---|
-| Mint Fashion | Fashion | Size, color, material, fit |
+| MisterBox Men | Men's fashion | Size, color, material, fit |
 | Lumi Beauty | Cosmetics | Skin type, ingredients, volume |
 | Nova Tech | Electronics | Connectivity, power, warranty |
 
@@ -33,8 +43,9 @@ The same agent engine serves all three workspaces without mixing their data.
 
 ```mermaid
 flowchart LR
-    C[Customer] --> W[Web console]
-    W --> A[FastAPI]
+    C[Customer] --> CH[Website / Messenger]
+    CH --> IN[Unified inbox]
+    IN --> A[FastAPI]
     A --> R[Tenant resolver]
     R --> G[Agent loop]
     G <--> L[Groq LLM]
@@ -53,7 +64,8 @@ Detailed design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 - Python 3.13, FastAPI and Pydantic
 - Groq OpenAI-compatible Chat Completions API
-- SQLite for the portfolio MVP
+- SQLite locally; PostgreSQL-ready persistence for server deployments
+- Scrypt authentication, role-based tenant access and encrypted Meta tokens
 - Responsive HTML/CSS/JavaScript console
 - Pytest, scenario evaluation and GitHub Actions
 - Docker and Docker Compose
@@ -72,6 +84,15 @@ Open:
 - OpenAPI: <http://127.0.0.1:8000/docs>
 
 The application still works in deterministic fallback mode if `GROQ_API_KEY` is absent.
+
+For durable server data, set `DATABASE_URL` to a PostgreSQL connection string. It
+takes precedence over `DATABASE_PATH`; local development and tests continue to use
+SQLite without extra setup.
+
+To enable account protection, first create the owner at `/login`, then set
+`AUTH_REQUIRED=true`. For Facebook self-service onboarding, add
+`{PUBLIC_BASE_URL}/api/integrations/meta/callback` to the Meta app's valid OAuth
+redirect URIs and configure `TOKEN_ENCRYPTION_KEY`.
 
 ### Manual setup
 
@@ -93,11 +114,13 @@ docker compose up --build
 .\.venv313\Scripts\python.exe -m pytest -q
 .\.venv313\Scripts\python.exe scripts\evaluate.py
 .\.venv313\Scripts\python.exe scripts\evaluate.py --online
+node scripts\e2e_browser.mjs  # requires the app running on port 8000
 ```
 
 Current deterministic baseline:
 
-- **11 automated tests passed**
+- **31 automated tests passed**
+- **10/10 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution workflow and integration readiness.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
 - Coverage includes tenant isolation, product grounding, stock guard, explicit confirmation, prompt injection refusal and human handoff.
@@ -111,6 +134,24 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 | `GET` | `/api/shops` | List tenant workspaces |
 | `GET` | `/api/shops/{slug}/products` | Read tenant-scoped catalog |
 | `POST` | `/api/shops/{slug}/chat` | Run the sales agent |
+| `POST` | `/api/channels/web/{slug}/messages` | Receive a website-widget message |
+| `GET/POST` | `/api/webhooks/meta` | Verify and receive Messenger webhooks |
+| `POST` | `/api/bridges/make/messenger/{slug}` | Receive a Messenger message from Make |
+| `GET` | `/api/integrations/make/status` | Read Make bridge readiness and its inbound URL |
+| `GET` | `/api/shops/{slug}/inbox/conversations` | List unified inbox conversations |
+| `GET` | `/api/shops/{slug}/inbox/conversations/{id}/messages` | Read a channel thread |
+| `POST` | `/api/shops/{slug}/inbox/conversations/{id}/messages` | Reply as a human agent |
+| `POST` | `/api/shops/{slug}/inbox/conversations/{id}/bot` | Switch between AI and human handling |
+| `POST` | `/api/shops/{slug}/inbox/conversations/{id}/actions` | Take over, resolve or reopen an inbox conversation |
+| `POST` | `/api/shops/{slug}/inbox/conversations/{id}/read` | Mark inbound messages as read |
+| `POST` | `/api/shops/{slug}/inbox/conversations/{id}/assist` | Draft a grounded reply for human review without sending it |
+| `GET` | `/api/integrations/meta/status` | Read review URLs and configuration readiness without exposing secrets |
+| `POST` | `/api/auth/register`, `/api/auth/login`, `/api/auth/logout` | Manage ShopPilot accounts and HttpOnly sessions |
+| `GET` | `/api/shops/{slug}/integrations/meta/connect` | Start Meta OAuth without collecting a Facebook password |
+| `GET` | `/api/integrations/meta/callback` | Exchange Meta authorization and load manageable Pages |
+| `POST` | `/api/shops/{slug}/integrations/meta/complete` | Encrypt the selected Page token and subscribe its webhook |
+| `POST` | `/api/meta/data-deletion` | Verify Meta's signed deletion request and remove user data |
+| `GET` | `/api/data-deletion/status/{code}` | Check an anonymous deletion receipt |
 | `POST` | `/api/shops/{slug}/products/import` | Import catalog CSV |
 | `GET` | `/api/conversations/{id}/trace` | Inspect messages, tools and actions |
 | `GET` | `/api/shops/{slug}/metrics` | Read operational demo metrics |
@@ -120,9 +161,12 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 ```text
 app/
 ├── agent.py          # Groq tool loop, state and fallback
+├── copilot.py        # Human-assist summaries and reply drafts
+├── inbox.py          # Idempotent channel-to-agent orchestration
+├── channels/         # Website and Meta Messenger adapters
 ├── tools.py          # Business tools and confirmation workflow
 ├── repository.py     # Tenant-scoped data access
-├── database.py       # SQLite schema and transactions
+├── database.py       # SQLite/PostgreSQL schema and transactions
 ├── main.py           # FastAPI endpoints
 └── static/           # Chat, catalog and observability UI
 evals/                # Scenario-based agent evaluation
@@ -141,7 +185,25 @@ docs/                 # Architecture and interview learning material
 
 ## Current limitations
 
-This repository is a portfolio MVP. Catalog, shipping rules and order fulfillment are simulated. A production version would add PostgreSQL, authentication and RBAC, encrypted customer data, rate limiting, background jobs, real commerce/transport adapters, online evaluation with human labels and production monitoring.
+This repository is a portfolio MVP. Catalog, shipping rules and order fulfillment are simulated. Account sessions, tenant roles, PostgreSQL and encrypted Meta OAuth onboarding are implemented. A production version would additionally add email verification/password recovery, rate limiting, a durable job queue, real commerce/transport adapters, online evaluation with human labels, production monitoring and Meta Advanced Access approval.
+
+## Embed the website widget
+
+```html
+<script
+  src="https://YOUR-SHOPPILOT-DOMAIN/static/widget.js"
+  data-shop="mint-fashion"
+  data-color="#18b99f">
+</script>
+```
+
+For a local preview, open <http://127.0.0.1:8000/static/widget.html?shop=mint-fashion>.
+
+Messenger setup: [docs/META_SETUP.md](docs/META_SETUP.md).
+
+Fast Messenger pilot through Make: [docs/MAKE_MESSENGER_SETUP.md](docs/MAKE_MESSENGER_SETUP.md).
+
+Public review pages are available at `/privacy`, `/terms` and `/data-deletion`.
 
 ## Learn the project
 

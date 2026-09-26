@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -38,3 +38,53 @@ class ProductCreate(BaseModel):
     price: int = Field(ge=0)
     stock: int = Field(ge=0)
     attributes: dict[str, Any] = {}
+
+
+class WebChannelMessage(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    conversation_id: str | None = None
+    customer_id: str | None = Field(default=None, max_length=120)
+    customer_name: str | None = Field(default=None, max_length=120)
+
+
+class MakeMessengerMessage(BaseModel):
+    event_id: str = Field(min_length=1, max_length=200)
+    sender_id: str = Field(min_length=1, max_length=200)
+    message: str = Field(min_length=1, max_length=2000)
+    page_id: str = Field(default="make-page", min_length=1, max_length=200)
+    customer_name: str | None = Field(default=None, max_length=120)
+
+
+class BotControlRequest(BaseModel):
+    enabled: bool
+    assigned_to: str | None = Field(default=None, max_length=120)
+
+
+class HumanReplyRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    agent_name: str = Field(default="Dương Thị Ngân", min_length=2, max_length=120)
+    suggestion_id: int | None = Field(default=None, ge=1)
+
+
+class InboxActionRequest(BaseModel):
+    action: Literal["takeover", "resolve", "reopen"]
+    agent_name: str = Field(default="Dương Thị Ngân", min_length=2, max_length=120)
+
+
+class RegisterRequest(BaseModel):
+    display_name: str = Field(min_length=2, max_length=120)
+    email: str = Field(pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$", max_length=254)
+    password: str = Field(min_length=10, max_length=200)
+    shop_name: str = Field(min_length=2, max_length=100)
+    shop_slug: str = Field(pattern=r"^[a-z0-9-]+$", min_length=3, max_length=50)
+    category: str = Field(min_length=2, max_length=60)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(max_length=254)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class MetaConnectionComplete(BaseModel):
+    state: str = Field(min_length=20, max_length=300)
+    page_id: str = Field(min_length=1, max_length=200)

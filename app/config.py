@@ -11,15 +11,40 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "ShopPilot AI"
-    app_version: str = "0.1.0"
+    app_version: str = "0.8.0"
     app_env: str = os.getenv("APP_ENV", "development")
     database_path: Path = BASE_DIR / os.getenv("DATABASE_PATH", "data/shoppilot.db")
+    database_url: str | None = os.getenv("DATABASE_URL")
+    auth_required: bool = env_bool("AUTH_REQUIRED", False)
+    registration_enabled: bool = env_bool("REGISTRATION_ENABLED", True)
+    session_cookie_name: str = os.getenv("SESSION_COOKIE_NAME", "shoppilot_session")
+    session_days: int = int(os.getenv("SESSION_DAYS", "14"))
+    token_encryption_key: str | None = os.getenv("TOKEN_ENCRYPTION_KEY")
     groq_api_key: str | None = os.getenv("GROQ_API_KEY")
     groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
     groq_base_url: str = "https://api.groq.com/openai/v1"
+    public_base_url: str = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000")
+    meta_shop_slug: str = os.getenv("META_SHOP_SLUG", "mint-fashion")
+    meta_page_id: str | None = os.getenv("META_PAGE_ID")
+    meta_app_id: str | None = os.getenv("META_APP_ID")
+    meta_app_secret: str | None = os.getenv("META_APP_SECRET")
+    meta_page_access_token: str | None = os.getenv("META_PAGE_ACCESS_TOKEN")
+    meta_verify_token: str | None = os.getenv("META_VERIFY_TOKEN")
+    meta_graph_api_version: str = os.getenv("META_GRAPH_API_VERSION", "v26.0")
+    make_bridge_secret: str | None = os.getenv("MAKE_BRIDGE_SECRET")
+    make_messenger_outbound_webhook_url: str | None = os.getenv(
+        "MAKE_MESSENGER_OUTBOUND_WEBHOOK_URL"
+    )
 
 
 settings = Settings()

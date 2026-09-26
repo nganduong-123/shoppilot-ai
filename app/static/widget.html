@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ShopPilot AI</title>
+  <style>
+    :root{--accent:#18b99f;--ink:#13231f;--muted:#668079;--line:#dfe9e6}*{box-sizing:border-box}body{margin:0;height:100vh;background:#fff;color:var(--ink);font:14px/1.5 Inter,system-ui,sans-serif}.shell{height:100%;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:20px;overflow:hidden}.head{padding:17px 18px;background:linear-gradient(135deg,#0b2b25,#11453b);color:#fff;display:flex;align-items:center;gap:11px}.orb{width:42px;height:42px;border-radius:14px;background:var(--accent);display:grid;place-items:center;color:#06201b;font-weight:900}.title{flex:1}.title strong,.title small{display:block}.title small{opacity:.7;font-size:11px;margin-top:2px}.close{border:0;background:transparent;color:#fff;font-size:21px;cursor:pointer}.messages{flex:1;overflow:auto;background:#f7faf9;padding:17px}.welcome{padding:15px;border:1px solid var(--line);border-radius:15px;background:#fff;box-shadow:0 8px 25px rgba(22,65,56,.06)}.welcome strong{display:block;margin-bottom:5px}.message{max-width:85%;margin:0 0 11px;padding:10px 12px;border-radius:14px;white-space:pre-wrap}.assistant{background:#fff;border:1px solid var(--line);border-bottom-left-radius:4px}.user{margin-left:auto;background:var(--accent);color:#06201b;border-bottom-right-radius:4px}.typing{color:var(--muted)}form{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line);background:#fff}input{flex:1;min-width:0;border:1px solid var(--line);border-radius:12px;padding:11px 12px;outline:0}input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}button[type=submit]{width:43px;border:0;border-radius:12px;background:var(--accent);color:#06201b;font-weight:900;cursor:pointer}.note{padding:0 14px 10px;color:#8a9b97;background:#fff;font-size:9px;text-align:center}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="head"><span class="orb">SP</span><span class="title"><strong id="shop-name">Trợ lý mua sắm</strong><small>● Phản hồi ngay · Có nhân viên hỗ trợ</small></span><button class="close" type="button" aria-label="Đóng">×</button></header>
+    <section class="messages" id="messages"><div class="welcome"><strong>Xin chào 👋</strong>Mình có thể giúp bạn tìm sản phẩm, kiểm tra tồn kho, phí giao hàng hoặc chuyển cho nhân viên.</div></section>
+    <form id="form"><input id="input" maxlength="2000" autocomplete="off" placeholder="Nhập câu hỏi của bạn…"><button type="submit" aria-label="Gửi">→</button></form>
+    <div class="note">AI có thể trả lời sai · Đơn hàng cần được xác nhận</div>
+  </main>
+  <script>
+    const params=new URLSearchParams(location.search),shop=params.get("shop")||"mint-fashion",color=params.get("color")||"#18b99f";document.documentElement.style.setProperty("--accent",color);
+    const key=`shoppilot:${shop}:conversation`,messages=document.querySelector("#messages"),input=document.querySelector("#input"),seen=new Set();let conversationId=localStorage.getItem(key);
+    const add=(role,text)=>{const welcome=messages.querySelector(".welcome");if(welcome)welcome.remove();const node=document.createElement("div");node.className=`message ${role}`;node.textContent=text;messages.append(node);messages.scrollTop=messages.scrollHeight;return node};
+    const syncMessages=async()=>{if(!conversationId)return;const response=await fetch(`/api/channels/web/${shop}/conversations/${conversationId}/messages`);if(!response.ok)return;for(const message of await response.json()){if(seen.has(message.id))continue;seen.add(message.id);add(message.direction==="outbound"?"assistant":"user",message.content)}};
+    fetch(`/api/shops/${shop}`).then(r=>r.ok?r.json():null).then(data=>{if(data)document.querySelector("#shop-name").textContent=data.name}).catch(()=>{});
+    document.querySelector(".close").onclick=()=>parent.postMessage("shoppilot:close","*");
+    document.querySelector("#form").onsubmit=async event=>{event.preventDefault();const text=input.value.trim();if(!text)return;input.value="";const pending=add("user",text),wait=add("assistant typing","Đang tìm thông tin…");try{const response=await fetch(`/api/channels/web/${shop}/messages`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:text,conversation_id:conversationId})});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Không thể gửi tin");conversationId=data.conversation_id;localStorage.setItem(key,conversationId);pending.remove();wait.remove();await syncMessages()}catch(error){wait.className="message assistant";wait.textContent=`Có lỗi kết nối: ${error.message}`}};
+    syncMessages();setInterval(syncMessages,3000);
+  </script>
+</body>
+</html>

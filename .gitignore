@@ -1,6 +1,7 @@
 .env
 .venv*/
 __pycache__/
+.chrome-test*/
 *.py[cod]
 .pytest_cache/
 .coverage

@@ -6,7 +6,7 @@
 
 Với hành động làm thay đổi dữ liệu, em không cho LLM tự xác nhận. Agent chỉ tạo draft; workflow Python yêu cầu khách xác nhận ở lượt sau, kiểm tra lại tồn kho rồi mới trừ hàng. Trường hợp khiếu nại hoặc thiếu căn cứ được chuyển nhân viên cùng toàn bộ ngữ cảnh.
 
-Hệ thống dùng FastAPI, SQLite, Groq và giao diện web responsive. Em thêm audit trace, 11 unit/integration tests và 16 evaluation scenarios để đo tool routing, tenant isolation và safety workflow.”
+Hệ thống dùng FastAPI, PostgreSQL/SQLite, Groq và giao diện web responsive. Unified inbox nhận diện tín hiệu mua, đưa ca cần người lên đầu và cảnh báo SLA năm phút. Khi nhân viên tiếp quản, Copilot tóm tắt và soạn sẵn câu trả lời nhưng không tự gửi. Chủ shop kết nối Page bằng Meta OAuth nên không chia sẻ mật khẩu; Page token được mã hóa và ánh xạ theo tenant. Em thêm audit trace, 31 automated tests, 10 browser E2E checks và 16 evaluation scenarios để đo tool routing, tenant isolation và safety workflow.”
 
 ## Câu hỏi thường gặp
 
@@ -26,14 +26,22 @@ API resolve shop trước khi tạo `ShopTools`. Mọi truy vấn product đều
 
 LLM API có thể lỗi hoặc hết quota. Fallback giữ các luồng cốt lõi hoạt động và tạo baseline để so với model online.
 
+### Hệ thống chống bỏ sót khách như thế nào?
+
+Khi AI handoff hoặc nhân viên tắt bot, hội thoại chuyển sang `waiting`. Repository kết hợp trạng thái này với tín hiệu mua hàng và thời gian chờ để xếp ưu tiên. Ca quá năm phút vi phạm SLA được đưa lên đầu; nhân viên có thể nhận xử lý rồi đánh dấu hoàn tất. Quy tắc này nằm trong code nên giải thích và kiểm thử được.
+
+### Copilot khác chatbot tự trả lời như thế nào?
+
+Chatbot gửi câu trả lời thẳng cho khách. Copilot chỉ tạo tóm tắt, cảnh báo rủi ro và bản nháp trong màn hình nhân viên. Nhân viên kiểm tra, sửa nếu cần rồi chủ động gửi. Vì vậy shop tăng tốc độ phản hồi mà vẫn giữ người chịu trách nhiệm cho các ca chốt đơn hoặc khiếu nại.
+
 ### 100% evaluation có nghĩa hệ thống hoàn hảo không?
 
 Không. Kết quả chỉ đúng trên 16 scenario đã định nghĩa ở chế độ offline. Cần mở rộng dữ liệu, chạy online eval, human review và theo dõi production trước khi dùng thật.
 
 ### Hạn chế hiện tại là gì?
 
-Catalog và shipping đang là dữ liệu mô phỏng; chưa kết nối Sapo, Haravan, KiotViet hay đơn vị vận chuyển. SQLite phù hợp demo, production nên dùng PostgreSQL, authentication, RBAC và mã hóa thông tin khách hàng.
+Catalog và shipping đang là dữ liệu mô phỏng; chưa kết nối Sapo, Haravan, KiotViet hay đơn vị vận chuyển. Ứng dụng đã hỗ trợ PostgreSQL cho dữ liệu bền vững trên server; production vẫn cần authentication, RBAC và mã hóa thông tin khách hàng.
 
 ## Dòng CV đề xuất
 
-> Built ShopPilot AI, a multi-tenant commerce agent using FastAPI, Groq and tool calling; implemented catalog-grounded recommendations, human handoff, auditable traces, and confirmation-gated order workflows, validated with automated tests and scenario-based evaluation.
+> Built ShopPilot AI, a multi-tenant commerce agent using FastAPI, Groq and tool calling; implemented a revenue-prioritized omnichannel inbox, human reply copilot, catalog-grounded recommendations, auditable traces, and confirmation-gated order workflows, validated with automated tests and scenario-based evaluation.
