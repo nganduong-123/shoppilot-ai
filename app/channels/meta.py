@@ -15,16 +15,24 @@ from app.config import Settings, settings
 class MetaMessengerAdapter(ChannelAdapter):
     channel = "messenger"
 
-    def __init__(self, config: Settings | None = None) -> None:
+    def __init__(
+        self,
+        config: Settings | None = None,
+        *,
+        page_id: str | None = None,
+        page_access_token: str | None = None,
+    ) -> None:
         self.config = config or settings
+        self.page_id = page_id or self.config.meta_page_id
+        self.page_access_token = page_access_token or self.config.meta_page_access_token
 
     @property
     def configured(self) -> bool:
         return bool(
             self.config.meta_app_secret
-            and self.config.meta_page_access_token
+            and self.page_access_token
             and self.config.meta_verify_token
-            and self.config.meta_page_id
+            and self.page_id
         )
 
     def verify_signature(self, body: bytes, signature: str | None) -> bool:
@@ -77,7 +85,7 @@ class MetaMessengerAdapter(ChannelAdapter):
             return []
         events: list[InboundMessage] = []
         for entry in payload.get("entry", []):
-            page_id = str(entry.get("id") or self.config.meta_page_id or "")
+            page_id = str(entry.get("id") or self.page_id or "")
             for item in entry.get("messaging", []):
                 message = item.get("message") or {}
                 sender_id = str((item.get("sender") or {}).get("id") or "")
@@ -103,7 +111,7 @@ class MetaMessengerAdapter(ChannelAdapter):
         return events
 
     async def send_text(self, recipient_id: str, text: str) -> dict[str, Any]:
-        if not self.config.meta_page_access_token:
+        if not self.page_access_token:
             raise RuntimeError("META_PAGE_ACCESS_TOKEN chưa được cấu hình.")
         url = (
             f"https://graph.facebook.com/{self.config.meta_graph_api_version}"
@@ -112,7 +120,7 @@ class MetaMessengerAdapter(ChannelAdapter):
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.post(
                 url,
-                params={"access_token": self.config.meta_page_access_token},
+                params={"access_token": self.page_access_token},
                 json={
                     "recipient": {"id": recipient_id},
                     "messaging_type": "RESPONSE",

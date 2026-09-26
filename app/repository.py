@@ -97,6 +97,119 @@ def _inbox_sort_key(item: dict[str, Any]) -> tuple[int, float]:
 
 
 class Repository:
+    def create_user_with_shop(
+        self,
+        *,
+        email: str,
+        display_name: str,
+        password_hash: str,
+        shop: dict[str, Any],
+    ) -> dict[str, Any]:
+        user_id = str(uuid4())
+        now = utc_now()
+        with db_session() as connection:
+            connection.execute(
+                """
+                INSERT INTO users
+                    (id, email, display_name, password_hash, status, created_at)
+                VALUES (?, ?, ?, ?, 'active', ?)
+                """,
+                (user_id, email, display_name, password_hash, now),
+            )
+            cursor = connection.execute(
+                """
+                INSERT INTO shops
+                    (slug, name, category, tagline, policy_text, voice, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    shop["slug"], shop["name"], shop["category"], shop["tagline"],
+                    shop["policy_text"], shop["voice"], now,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO shop_members (shop_id, user_id, role, created_at)
+                VALUES (?, ?, 'owner', ?)
+                """,
+                (cursor.lastrowid, user_id, now),
+            )
+            row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            return dict(row)
+
+    def get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE email = ?", (email,)
+            ).fetchone()
+            return row_to_dict(row)
+
+    def create_auth_session(self, user_id: str, token_hash: str, expires_at: str) -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                INSERT INTO auth_sessions (id, user_id, token_hash, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (str(uuid4()), user_id, token_hash, expires_at, utc_now()),
+            )
+
+    def get_user_by_session(self, token_hash: str, now: str) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT u.id, u.email, u.display_name, u.status, u.created_at
+                FROM auth_sessions s
+                JOIN users u ON u.id = s.user_id
+                WHERE s.token_hash = ? AND s.expires_at > ? AND u.status = 'active'
+                """,
+                (token_hash, now),
+            ).fetchone()
+            return row_to_dict(row)
+
+    def delete_auth_session(self, token_hash: str) -> None:
+        with db_session() as connection:
+            connection.execute("DELETE FROM auth_sessions WHERE token_hash = ?", (token_hash,))
+
+    def list_user_shops(self, user_id: str) -> list[dict[str, Any]]:
+        with db_session() as connection:
+            rows = connection.execute(
+                """
+                SELECT s.*, sm.role, COUNT(p.id) AS product_count,
+                       COALESCE(SUM(p.stock), 0) AS total_stock
+                FROM shop_members sm
+                JOIN shops s ON s.id = sm.shop_id
+                LEFT JOIN products p ON p.shop_id = s.id AND p.active = 1
+                WHERE sm.user_id = ?
+                GROUP BY s.id, sm.role
+                ORDER BY s.id
+                """,
+                (user_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_shop_member(self, shop_id: int, user_id: str) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT shop_id, user_id, role, created_at
+                FROM shop_members WHERE shop_id = ? AND user_id = ?
+                """,
+                (shop_id, user_id),
+            ).fetchone()
+            return row_to_dict(row)
+
+    def add_shop_member(self, shop_id: int, user_id: str, role: str = "owner") -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                INSERT INTO shop_members (shop_id, user_id, role, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(shop_id, user_id) DO UPDATE SET role = excluded.role
+                """,
+                (shop_id, user_id, role, utc_now()),
+            )
+
     def list_shops(self) -> list[dict[str, Any]]:
         with db_session() as connection:
             rows = connection.execute(
@@ -114,6 +227,11 @@ class Repository:
     def get_shop(self, slug: str) -> dict[str, Any] | None:
         with db_session() as connection:
             row = connection.execute("SELECT * FROM shops WHERE slug = ?", (slug,)).fetchone()
+            return row_to_dict(row)
+
+    def get_shop_by_id(self, shop_id: int) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute("SELECT * FROM shops WHERE id = ?", (shop_id,)).fetchone()
             return row_to_dict(row)
 
     def create_shop(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -379,6 +497,99 @@ class Repository:
             result = dict(row)
             result["config"] = json_loads(result.pop("config_json"))
             return result
+
+    def get_channel_connection(self, connection_id: int) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                "SELECT * FROM channel_connections WHERE id = ?", (connection_id,)
+            ).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["config"] = json_loads(result.pop("config_json"))
+            return result
+
+    def get_channel_connection_by_external(
+        self, channel: str, external_account_id: str
+    ) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM channel_connections
+                WHERE channel = ? AND external_account_id = ? AND status = 'active'
+                """,
+                (channel, external_account_id),
+            ).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["config"] = json_loads(result.pop("config_json"))
+            return result
+
+    def list_channel_connections(
+        self, shop_id: int, channel: str | None = None
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM channel_connections WHERE shop_id = ?"
+        params: list[Any] = [shop_id]
+        if channel:
+            query += " AND channel = ?"
+            params.append(channel)
+        query += " ORDER BY id"
+        with db_session() as connection:
+            rows = connection.execute(query, params).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                item["config"] = json_loads(item.pop("config_json"))
+                result.append(item)
+            return result
+
+    def create_meta_oauth_state(
+        self, state_hash: str, user_id: str, shop_id: int, expires_at: str
+    ) -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                INSERT INTO meta_oauth_states
+                    (state_hash, user_id, shop_id, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (state_hash, user_id, shop_id, expires_at, utc_now()),
+            )
+
+    def set_meta_oauth_candidates(self, state_hash: str, candidates: list[dict[str, Any]]) -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                UPDATE meta_oauth_states SET candidates_json = ?
+                WHERE state_hash = ? AND used_at IS NULL
+                """,
+                (json_dumps(candidates), state_hash),
+            )
+
+    def get_meta_oauth_state(
+        self, state_hash: str, user_id: str, now: str
+    ) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM meta_oauth_states
+                WHERE state_hash = ? AND user_id = ? AND expires_at > ? AND used_at IS NULL
+                """,
+                (state_hash, user_id, now),
+            ).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["candidates"] = json_loads(result.pop("candidates_json"), [])
+            return result
+
+    def consume_meta_oauth_state(self, state_hash: str) -> None:
+        with db_session() as connection:
+            connection.execute(
+                "UPDATE meta_oauth_states SET used_at = ? WHERE state_hash = ?",
+                (utc_now(), state_hash),
+            )
 
     def record_channel_event(
         self,

@@ -69,3 +69,22 @@ class HumanReplyRequest(BaseModel):
 class InboxActionRequest(BaseModel):
     action: Literal["takeover", "resolve", "reopen"]
     agent_name: str = Field(default="Dương Thị Ngân", min_length=2, max_length=120)
+
+
+class RegisterRequest(BaseModel):
+    display_name: str = Field(min_length=2, max_length=120)
+    email: str = Field(pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$", max_length=254)
+    password: str = Field(min_length=10, max_length=200)
+    shop_name: str = Field(min_length=2, max_length=100)
+    shop_slug: str = Field(pattern=r"^[a-z0-9-]+$", min_length=3, max_length=50)
+    category: str = Field(min_length=2, max_length=60)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(max_length=254)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class MetaConnectionComplete(BaseModel):
+    state: str = Field(min_length=20, max_length=300)
+    page_id: str = Field(min_length=1, max_length=200)

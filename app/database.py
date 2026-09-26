@@ -181,16 +181,57 @@ CREATE TABLE IF NOT EXISTS data_deletion_requests (
     completed_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS shop_members (
+    shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'agent',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(shop_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS meta_oauth_states (
+    state_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    candidates_json TEXT,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_conversation ON tool_calls(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_channel_conversations_shop ON channel_conversations(shop_id, last_message_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_connection_account
+    ON channel_connections(channel, external_account_id);
 CREATE INDEX IF NOT EXISTS idx_channel_messages_conversation ON channel_messages(channel_conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_channel_events_status ON channel_events(status, received_at);
 CREATE INDEX IF NOT EXISTS idx_copilot_conversation
     ON copilot_suggestions(channel_conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_data_deletion_status
     ON data_deletion_requests(status, requested_at);
+CREATE INDEX IF NOT EXISTS idx_shop_members_user ON shop_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth_sessions(token_hash, expires_at);
+CREATE INDEX IF NOT EXISTS idx_meta_oauth_states_user
+    ON meta_oauth_states(user_id, expires_at);
 """
 
 # Keep JSON and timestamps as text so repository queries remain portable.

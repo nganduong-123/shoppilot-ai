@@ -9,11 +9,12 @@ from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.agent import sales_agent
+from app.auth import auth_service, require_user
 from app.channels.base import InboundMessage
 from app.channels.make import MakeMessengerAdapter
 from app.channels.meta import MetaMessengerAdapter
@@ -22,6 +23,7 @@ from app.config import BASE_DIR, settings
 from app.copilot import inbox_copilot
 from app.database import init_database, is_integrity_error, using_postgres
 from app.inbox import inbox_service
+from app.meta_oauth import meta_oauth_service
 from app.repository import repository
 from app.schemas import (
     BotControlRequest,
@@ -31,10 +33,14 @@ from app.schemas import (
     InboxActionRequest,
     ProductCreate,
     HumanReplyRequest,
+    LoginRequest,
+    MetaConnectionComplete,
+    RegisterRequest,
     ShopCreate,
     WebChannelMessage,
 )
 from app.seed import seed_demo_data
+from app.token_crypto import decrypt_secret
 
 
 @asynccontextmanager
@@ -43,10 +49,14 @@ async def lifespan(_: FastAPI):
     seed_demo_data()
     if settings.meta_page_id:
         shop = repository.get_shop(settings.meta_shop_slug)
-        if shop:
+        existing = repository.get_channel_connection_by_external(
+            "messenger", settings.meta_page_id
+        )
+        if shop and not existing:
             repository.upsert_channel_connection(
                 shop["id"], "messenger", settings.meta_page_id,
                 f"Facebook Page {settings.meta_page_id}",
+                {"source": "environment"},
             )
     yield
 
@@ -67,6 +77,11 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/login", include_in_schema=False)
+def login_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "login.html")
+
+
 @app.get("/privacy", include_in_schema=False)
 def privacy_policy() -> FileResponse:
     return FileResponse(STATIC_DIR / "privacy.html")
@@ -80,6 +95,51 @@ def terms_of_service() -> FileResponse:
 @app.get("/data-deletion", include_in_schema=False)
 def data_deletion_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "data-deletion.html")
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request) -> dict:
+    user = auth_service.user_from_request(request)
+    return {
+        "authenticated": bool(user),
+        "auth_required": settings.auth_required,
+        "registration_enabled": settings.registration_enabled,
+        "user": user,
+        "shops": repository.list_user_shops(user["id"]) if user else [],
+    }
+
+
+@app.post("/api/auth/register", status_code=201)
+def register_account(payload: RegisterRequest, response: Response) -> dict:
+    if not settings.registration_enabled:
+        raise HTTPException(status_code=403, detail="Đăng ký tài khoản đang tạm đóng.")
+    try:
+        user, token = auth_service.register(payload.model_dump())
+    except Exception as exc:
+        if not is_integrity_error(exc):
+            raise
+        raise HTTPException(
+            status_code=409, detail="Email hoặc mã cửa hàng đã được sử dụng."
+        ) from exc
+    auth_service.set_session_cookie(response, token)
+    return {"user": user, "shops": repository.list_user_shops(user["id"])}
+
+
+@app.post("/api/auth/login")
+def login_account(payload: LoginRequest, response: Response) -> dict:
+    result = auth_service.login(payload.email, payload.password)
+    if not result:
+        raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng.")
+    user, token = result
+    auth_service.set_session_cookie(response, token)
+    return {"user": user, "shops": repository.list_user_shops(user["id"])}
+
+
+@app.post("/api/auth/logout")
+def logout_account(request: Request, response: Response) -> dict:
+    auth_service.logout(request)
+    auth_service.clear_session_cookie(response)
+    return {"logged_out": True}
 
 
 @app.get("/api/health")
@@ -101,10 +161,25 @@ def health() -> dict:
 
 
 @app.get("/api/integrations/meta/status")
-def meta_integration_status() -> dict:
+def meta_integration_status(request: Request, shop_slug: str | None = None) -> dict:
     public_url = settings.public_base_url.rstrip("/")
+    connections = []
+    if shop_slug:
+        shop = require_managed_shop(shop_slug, request)
+        connections = repository.list_channel_connections(shop["id"], "messenger")
+    configured = bool(connections) or MetaMessengerAdapter().configured
     return {
-        "configured": MetaMessengerAdapter().configured,
+        "configured": configured,
+        "oauth_available": meta_oauth_service.configured,
+        "connections": [
+            {
+                "page_id": item["external_account_id"],
+                "display_name": item["display_name"],
+                "status": item["status"],
+                "source": item["config"].get("source", "environment"),
+            }
+            for item in connections
+        ],
         "requirements": {
             "app_id": bool(settings.meta_app_id),
             "app_secret": bool(settings.meta_app_secret),
@@ -122,6 +197,63 @@ def meta_integration_status() -> dict:
     }
 
 
+def require_shop_owner(slug: str, request: Request) -> tuple[dict, dict]:
+    user = require_user(request)
+    shop = require_shop(slug)
+    member = repository.get_shop_member(shop["id"], user["id"])
+    if not member or member["role"] not in {"owner", "manager"}:
+        raise HTTPException(status_code=403, detail="Chỉ chủ shop hoặc quản lý được kết nối Page.")
+    return shop, user
+
+
+@app.get("/api/shops/{slug}/integrations/meta/connect")
+def start_meta_oauth(slug: str, request: Request) -> dict:
+    shop, user = require_shop_owner(slug, request)
+    try:
+        authorization_url = meta_oauth_service.start(user["id"], shop["id"])
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"authorization_url": authorization_url}
+
+
+@app.get("/api/integrations/meta/callback", include_in_schema=False)
+async def meta_oauth_callback(request: Request, state: str, code: str) -> RedirectResponse:
+    user = require_user(request)
+    try:
+        await meta_oauth_service.exchange_code(user["id"], state, code)
+    except (ValueError, RuntimeError, httpx.HTTPError) as exc:
+        return RedirectResponse(
+            f"/static/meta-connect.html?error={quote(str(exc))}", status_code=303
+        )
+    return RedirectResponse(f"/static/meta-connect.html?state={quote(state)}", status_code=303)
+
+
+@app.get("/api/integrations/meta/candidates")
+def meta_oauth_candidates(request: Request, state: str) -> dict:
+    user = require_user(request)
+    try:
+        return meta_oauth_service.candidates(user["id"], state)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/shops/{slug}/integrations/meta/complete")
+async def complete_meta_oauth(
+    slug: str, payload: MetaConnectionComplete, request: Request
+) -> dict:
+    shop, user = require_shop_owner(slug, request)
+    try:
+        return await meta_oauth_service.complete(
+            user["id"], shop["id"], payload.state, payload.page_id
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail="Meta từ chối đăng ký webhook cho Page này."
+        ) from exc
+
+
 @app.get("/api/integrations/make/status")
 def make_integration_status() -> dict:
     public_url = settings.public_base_url.rstrip("/")
@@ -135,15 +267,37 @@ def make_integration_status() -> dict:
     }
 
 
+def authenticated_user_if_required(request: Request) -> dict | None:
+    user = auth_service.user_from_request(request)
+    if settings.auth_required and not user:
+        raise HTTPException(status_code=401, detail="Vui lòng đăng nhập ShopPilot.")
+    return user
+
+
+def require_managed_shop(slug: str, request: Request) -> dict:
+    shop = require_shop(slug)
+    user = authenticated_user_if_required(request)
+    if settings.auth_required and user and not repository.get_shop_member(shop["id"], user["id"]):
+        raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập cửa hàng này.")
+    return shop
+
+
 @app.get("/api/shops")
-def list_shops() -> list[dict]:
+def list_shops(request: Request) -> list[dict]:
+    user = authenticated_user_if_required(request)
+    if settings.auth_required and user:
+        return repository.list_user_shops(user["id"])
     return repository.list_shops()
 
 
 @app.post("/api/shops", status_code=201)
-def create_shop(payload: ShopCreate) -> dict:
+def create_shop(payload: ShopCreate, request: Request) -> dict:
+    user = authenticated_user_if_required(request)
     try:
-        return repository.create_shop(payload.model_dump())
+        shop = repository.create_shop(payload.model_dump())
+        if user:
+            repository.add_shop_member(shop["id"], user["id"], "owner")
+        return shop
     except Exception as exc:
         if not is_integrity_error(exc):
             raise
@@ -169,8 +323,8 @@ def list_products(slug: str) -> list[dict]:
 
 
 @app.post("/api/shops/{slug}/products", status_code=201)
-def create_product(slug: str, payload: ProductCreate) -> dict:
-    shop = require_shop(slug)
+def create_product(slug: str, payload: ProductCreate, request: Request) -> dict:
+    shop = require_managed_shop(slug, request)
     try:
         return repository.create_product(shop["id"], payload.model_dump())
     except Exception as exc:
@@ -180,8 +334,8 @@ def create_product(slug: str, payload: ProductCreate) -> dict:
 
 
 @app.post("/api/shops/{slug}/products/import", status_code=201)
-async def import_products(slug: str, file: UploadFile = File(...)) -> dict:
-    shop = require_shop(slug)
+async def import_products(slug: str, request: Request, file: UploadFile = File(...)) -> dict:
+    shop = require_managed_shop(slug, request)
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Vui lòng tải file CSV.")
     content = (await file.read()).decode("utf-8-sig")
@@ -306,26 +460,41 @@ def verify_meta_webhook(request: Request) -> PlainTextResponse:
 @app.post("/api/webhooks/meta")
 async def receive_meta_webhook(request: Request, background_tasks: BackgroundTasks) -> dict:
     body = await request.body()
-    adapter = MetaMessengerAdapter()
-    if not adapter.configured:
+    signature_adapter = MetaMessengerAdapter()
+    if not settings.meta_app_secret:
         raise HTTPException(status_code=503, detail="Kênh Messenger chưa được cấu hình.")
-    if not adapter.verify_signature(body, request.headers.get("X-Hub-Signature-256")):
+    if not signature_adapter.verify_signature(
+        body, request.headers.get("X-Hub-Signature-256")
+    ):
         raise HTTPException(status_code=401, detail="Chữ ký webhook không hợp lệ.")
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="Webhook JSON không hợp lệ.") from exc
-    shop = require_shop(settings.meta_shop_slug)
-    connection = repository.upsert_channel_connection(
-        shop["id"], "messenger", settings.meta_page_id or "unknown-page",
-        f"Facebook Page {settings.meta_page_id}",
-    )
-    events = adapter.parse_events(payload)
-    for event in events:
-        background_tasks.add_task(
-            inbox_service.process, shop, event, adapter, connection["id"]
-        )
-    return {"status": "accepted", "events": len(events)}
+    accepted = 0
+    for entry in payload.get("entry", []):
+        page_id = str(entry.get("id") or "")
+        connection = repository.get_channel_connection_by_external("messenger", page_id)
+        shop = repository.get_shop_by_id(connection["shop_id"]) if connection else None
+        page_token = None
+        if connection and connection["config"].get("page_access_token_enc"):
+            page_token = decrypt_secret(connection["config"]["page_access_token_enc"])
+        elif page_id == settings.meta_page_id:
+            shop = require_shop(settings.meta_shop_slug)
+            page_token = settings.meta_page_access_token
+            connection = repository.upsert_channel_connection(
+                shop["id"], "messenger", page_id, f"Facebook Page {page_id}"
+            )
+        if not shop or not connection or not page_token:
+            continue
+        adapter = MetaMessengerAdapter(page_id=page_id, page_access_token=page_token)
+        events = adapter.parse_events({"object": payload.get("object"), "entry": [entry]})
+        for event in events:
+            background_tasks.add_task(
+                inbox_service.process, shop, event, adapter, connection["id"]
+            )
+        accepted += len(events)
+    return {"status": "accepted", "events": accepted}
 
 
 @app.post("/api/meta/data-deletion")
@@ -363,13 +532,15 @@ def data_deletion_status(confirmation_code: str) -> dict:
 
 
 @app.get("/api/shops/{slug}/inbox/conversations")
-def list_inbox_conversations(slug: str) -> list[dict]:
-    shop = require_shop(slug)
+def list_inbox_conversations(slug: str, request: Request) -> list[dict]:
+    shop = require_managed_shop(slug, request)
     return repository.list_channel_conversations(shop["id"])
 
 
-def require_channel_conversation(slug: str, conversation_id: str) -> tuple[dict, dict]:
-    shop = require_shop(slug)
+def require_channel_conversation(
+    slug: str, conversation_id: str, request: Request | None = None
+) -> tuple[dict, dict]:
+    shop = require_managed_shop(slug, request) if request else require_shop(slug)
     conversation = repository.get_channel_conversation(conversation_id)
     if not conversation or conversation["shop_id"] != shop["id"]:
         raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
@@ -377,20 +548,22 @@ def require_channel_conversation(slug: str, conversation_id: str) -> tuple[dict,
 
 
 @app.get("/api/shops/{slug}/inbox/conversations/{conversation_id}/messages")
-def list_inbox_messages(slug: str, conversation_id: str) -> list[dict]:
-    require_channel_conversation(slug, conversation_id)
+def list_inbox_messages(slug: str, conversation_id: str, request: Request) -> list[dict]:
+    require_channel_conversation(slug, conversation_id, request)
     return repository.list_channel_messages(conversation_id)
 
 
 @app.post("/api/shops/{slug}/inbox/conversations/{conversation_id}/read")
-def mark_inbox_conversation_read(slug: str, conversation_id: str) -> dict:
-    require_channel_conversation(slug, conversation_id)
+def mark_inbox_conversation_read(slug: str, conversation_id: str, request: Request) -> dict:
+    require_channel_conversation(slug, conversation_id, request)
     return {"read": repository.mark_channel_messages_read(conversation_id)}
 
 
 @app.post("/api/shops/{slug}/inbox/conversations/{conversation_id}/assist")
-async def create_inbox_copilot_suggestion(slug: str, conversation_id: str) -> dict:
-    shop, conversation = require_channel_conversation(slug, conversation_id)
+async def create_inbox_copilot_suggestion(
+    slug: str, conversation_id: str, request: Request
+) -> dict:
+    shop, conversation = require_channel_conversation(slug, conversation_id, request)
     try:
         return await inbox_copilot.suggest(shop, conversation)
     except ValueError as exc:
@@ -399,9 +572,9 @@ async def create_inbox_copilot_suggestion(slug: str, conversation_id: str) -> di
 
 @app.post("/api/shops/{slug}/inbox/conversations/{conversation_id}/actions")
 def update_inbox_workflow(
-    slug: str, conversation_id: str, payload: InboxActionRequest
+    slug: str, conversation_id: str, payload: InboxActionRequest, request: Request
 ) -> dict:
-    require_channel_conversation(slug, conversation_id)
+    require_channel_conversation(slug, conversation_id, request)
     if payload.action == "takeover":
         updated = repository.update_channel_workflow(
             conversation_id,
@@ -427,8 +600,10 @@ def update_inbox_workflow(
 
 
 @app.post("/api/shops/{slug}/inbox/conversations/{conversation_id}/bot")
-def control_inbox_bot(slug: str, conversation_id: str, payload: BotControlRequest) -> dict:
-    require_channel_conversation(slug, conversation_id)
+def control_inbox_bot(
+    slug: str, conversation_id: str, payload: BotControlRequest, request: Request
+) -> dict:
+    require_channel_conversation(slug, conversation_id, request)
     updated = repository.set_channel_bot(
         conversation_id, payload.enabled, payload.assigned_to
     )
@@ -437,9 +612,9 @@ def control_inbox_bot(slug: str, conversation_id: str, payload: BotControlReques
 
 @app.post("/api/shops/{slug}/inbox/conversations/{conversation_id}/messages", status_code=201)
 async def send_inbox_reply(
-    slug: str, conversation_id: str, payload: HumanReplyRequest
+    slug: str, conversation_id: str, payload: HumanReplyRequest, request: Request
 ) -> dict:
-    _, conversation = require_channel_conversation(slug, conversation_id)
+    _, conversation = require_channel_conversation(slug, conversation_id, request)
     if conversation["channel"] == "messenger":
         if conversation.get("metadata", {}).get("source") == "make":
             adapter = MakeMessengerAdapter()
@@ -449,7 +624,12 @@ async def send_inbox_reply(
                     detail="Webhook gửi ra của Make chưa được cấu hình.",
                 )
         else:
-            adapter = MetaMessengerAdapter()
+            connection = repository.get_channel_connection(conversation["connection_id"])
+            token_enc = connection.get("config", {}).get("page_access_token_enc") if connection else None
+            adapter = MetaMessengerAdapter(
+                page_id=connection["external_account_id"] if connection else None,
+                page_access_token=decrypt_secret(token_enc) if token_enc else None,
+            )
             if not adapter.configured:
                 raise HTTPException(status_code=503, detail="Kênh Messenger chưa được cấu hình.")
     elif conversation["channel"] == "web":
@@ -470,14 +650,19 @@ async def send_inbox_reply(
 
 
 @app.get("/api/conversations/{conversation_id}/trace")
-def conversation_trace(conversation_id: str) -> dict:
+def conversation_trace(conversation_id: str, request: Request) -> dict:
     trace = repository.get_trace(conversation_id)
     if not trace:
         raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    user = authenticated_user_if_required(request)
+    if settings.auth_required and user and not repository.get_shop_member(
+        trace["conversation"]["shop_id"], user["id"]
+    ):
+        raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập hội thoại này.")
     return trace
 
 
 @app.get("/api/shops/{slug}/metrics")
-def shop_metrics(slug: str) -> dict:
-    shop = require_shop(slug)
+def shop_metrics(slug: str, request: Request) -> dict:
+    shop = require_managed_shop(slug, request)
     return repository.metrics(shop["id"])

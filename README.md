@@ -19,6 +19,8 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Revenue-rescue queue:** detects buying signals, flags unanswered handoffs, tracks a five-minute SLA and lets staff take or resolve each conversation.
 - **Human reply copilot:** summarizes the thread and drafts a grounded reply for staff review; it never sends a customer message automatically.
 - **Meta review readiness:** public privacy/terms pages plus a signed user-data deletion callback and status receipt.
+- **Secure shop accounts:** scrypt password hashing, HttpOnly sessions and owner/manager/agent tenant boundaries.
+- **Meta OAuth onboarding:** owners authorize on Meta, select a Page and store only an encrypted Page token; ShopPilot never receives a Facebook password.
 - **Optional Make bridge:** connects a pilot Messenger Page while direct Meta App access is pending.
 - **Embeddable web widget:** add a sales assistant to an existing store with one script tag.
 - **Auditable traces:** records every tool, arguments, result, latency and outcome.
@@ -63,6 +65,7 @@ Detailed design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Python 3.13, FastAPI and Pydantic
 - Groq OpenAI-compatible Chat Completions API
 - SQLite locally; PostgreSQL-ready persistence for server deployments
+- Scrypt authentication, role-based tenant access and encrypted Meta tokens
 - Responsive HTML/CSS/JavaScript console
 - Pytest, scenario evaluation and GitHub Actions
 - Docker and Docker Compose
@@ -85,6 +88,11 @@ The application still works in deterministic fallback mode if `GROQ_API_KEY` is 
 For durable server data, set `DATABASE_URL` to a PostgreSQL connection string. It
 takes precedence over `DATABASE_PATH`; local development and tests continue to use
 SQLite without extra setup.
+
+To enable account protection, first create the owner at `/login`, then set
+`AUTH_REQUIRED=true`. For Facebook self-service onboarding, add
+`{PUBLIC_BASE_URL}/api/integrations/meta/callback` to the Meta app's valid OAuth
+redirect URIs and configure `TOKEN_ENCRYPTION_KEY`.
 
 ### Manual setup
 
@@ -111,7 +119,7 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **26 automated tests passed**
+- **31 automated tests passed**
 - **10/10 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution workflow and integration readiness.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
@@ -138,6 +146,10 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 | `POST` | `/api/shops/{slug}/inbox/conversations/{id}/read` | Mark inbound messages as read |
 | `POST` | `/api/shops/{slug}/inbox/conversations/{id}/assist` | Draft a grounded reply for human review without sending it |
 | `GET` | `/api/integrations/meta/status` | Read review URLs and configuration readiness without exposing secrets |
+| `POST` | `/api/auth/register`, `/api/auth/login`, `/api/auth/logout` | Manage ShopPilot accounts and HttpOnly sessions |
+| `GET` | `/api/shops/{slug}/integrations/meta/connect` | Start Meta OAuth without collecting a Facebook password |
+| `GET` | `/api/integrations/meta/callback` | Exchange Meta authorization and load manageable Pages |
+| `POST` | `/api/shops/{slug}/integrations/meta/complete` | Encrypt the selected Page token and subscribe its webhook |
 | `POST` | `/api/meta/data-deletion` | Verify Meta's signed deletion request and remove user data |
 | `GET` | `/api/data-deletion/status/{code}` | Check an anonymous deletion receipt |
 | `POST` | `/api/shops/{slug}/products/import` | Import catalog CSV |
@@ -173,7 +185,7 @@ docs/                 # Architecture and interview learning material
 
 ## Current limitations
 
-This repository is a portfolio MVP. Catalog, shipping rules and order fulfillment are simulated. The Meta adapter currently connects one pilot Page through environment variables. PostgreSQL persistence is supported through `DATABASE_URL`; a production version would additionally add OAuth onboarding for many shops, authentication and RBAC, encrypted customer data, rate limiting, a durable job queue, real commerce/transport adapters, online evaluation with human labels and production monitoring.
+This repository is a portfolio MVP. Catalog, shipping rules and order fulfillment are simulated. Account sessions, tenant roles, PostgreSQL and encrypted Meta OAuth onboarding are implemented. A production version would additionally add email verification/password recovery, rate limiting, a durable job queue, real commerce/transport adapters, online evaluation with human labels, production monitoring and Meta Advanced Access approval.
 
 ## Embed the website widget
 

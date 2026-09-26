@@ -10,9 +10,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.channels.meta as meta_module
+import app.main as main_module
+import app.token_crypto as token_crypto_module
+from app.config import settings
 from app.channels.meta import MetaMessengerAdapter
 from app.main import app
 from app.repository import repository
+from app.token_crypto import encrypt_secret
 
 
 def meta_config(**overrides):
@@ -87,6 +91,71 @@ def test_meta_parser_ignores_echo_and_extracts_customer_message():
     assert events[0].external_event_id == "mid-1"
     assert events[0].external_conversation_id == "page-123:customer-9"
     assert events[0].text == "Còn size M không?"
+
+
+def test_oauth_connected_page_routes_webhook_to_its_own_shop(monkeypatch):
+    from dataclasses import replace
+
+    dynamic_settings = replace(
+        settings,
+        meta_app_secret="test-secret",
+        meta_page_id=None,
+        meta_page_access_token=None,
+        token_encryption_key="dynamic-token-key",
+    )
+    monkeypatch.setattr(main_module, "settings", dynamic_settings)
+    monkeypatch.setattr(meta_module, "settings", dynamic_settings)
+    monkeypatch.setattr(token_crypto_module, "settings", dynamic_settings)
+
+    async def fake_send_text(self, recipient_id, text):
+        assert self.page_access_token == "oauth-page-token"
+        return {"message_id": "oauth-reply"}
+
+    monkeypatch.setattr(MetaMessengerAdapter, "send_text", fake_send_text)
+    shop = repository.get_shop("lumi-beauty")
+    repository.upsert_channel_connection(
+        shop["id"],
+        "messenger",
+        "oauth-page",
+        "OAuth Page",
+        {
+            "source": "meta_oauth",
+            "page_access_token_enc": encrypt_secret("oauth-page-token"),
+        },
+    )
+    payload = {
+        "object": "page",
+        "entry": [
+            {
+                "id": "oauth-page",
+                "messaging": [
+                    {
+                        "sender": {"id": "oauth-customer"},
+                        "message": {"mid": "oauth-mid", "text": "Tư vấn serum"},
+                    }
+                ],
+            }
+        ],
+    }
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    signature = "sha256=" + hmac.new(
+        b"test-secret", body, hashlib.sha256
+    ).hexdigest()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/webhooks/meta",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signature,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["events"] == 1
+    conversations = repository.list_channel_conversations(shop["id"])
+    assert conversations[0]["external_customer_id"] == "oauth-customer"
 
 
 def test_repeated_platform_event_is_idempotent():

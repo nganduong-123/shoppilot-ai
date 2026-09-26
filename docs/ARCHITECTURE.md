@@ -31,6 +31,8 @@ flowchart LR
 | `tools.py` | Thực thi nghiệp vụ có kiểm soát và ghi trace |
 | `repository.py` | Đọc/ghi dữ liệu, luôn giới hạn theo `shop_id` |
 | `database.py` | Schema và transaction dùng SQLite local hoặc PostgreSQL trên server |
+| `auth.py` | Băm mật khẩu scrypt, tạo phiên đăng nhập HttpOnly và xác thực request |
+| `meta_oauth.py` | OAuth state, trao đổi authorization code, chọn Page và đăng ký webhook |
 | `main.py` | HTTP API, validation và phục vụ giao diện |
 | `channels/` | Chuẩn hóa webhook từng nền tảng và gửi phản hồi |
 | `inbox.py` | Chống sự kiện trùng, lưu hội thoại, điều phối AI/người thật |
@@ -57,6 +59,23 @@ Copilot đọc tối đa 16 tin nhắn gần nhất cùng catalog và chính sá
 Nhân viên phải bấm **Chèn vào ô trả lời**, có thể sửa nội dung rồi mới bấm **Gửi**. Mỗi bản nháp được lưu với trạng thái `generated` hoặc `used` để sau này đo tỷ lệ chấp nhận. Cơ chế này giữ con người ở điểm quyết định cuối cùng và tránh để AI tự gửi lời hứa về giá, phí giao hoặc hoàn tiền.
 
 Background task trong tiến trình phù hợp cho bản demo. Bản production cần hàng đợi bền vững như Redis/Celery để không mất sự kiện khi máy chủ khởi động lại.
+
+## Tài khoản và phân quyền
+
+1. Chủ shop tạo tài khoản ShopPilot; mật khẩu được băm bằng scrypt với salt riêng.
+2. Trình duyệt chỉ giữ session token trong cookie `HttpOnly`, `SameSite=Lax`; cơ sở dữ liệu chỉ lưu SHA-256 của token.
+3. `shop_members` gắn người dùng với shop bằng vai trò `owner`, `manager` hoặc `agent`.
+4. Khi `AUTH_REQUIRED=true`, inbox, metrics, catalog write và trace đều kiểm tra membership của đúng shop.
+5. Khách mua hàng vẫn dùng widget hoặc Messenger mà không cần tài khoản ShopPilot.
+
+## Meta OAuth onboarding
+
+1. Owner bấm **Kết nối Facebook Page** trong ShopPilot.
+2. Trình duyệt chuyển tới domain của Meta; mật khẩu Facebook chỉ được nhập tại Meta.
+3. Callback kiểm tra OAuth state có thời hạn 15 phút rồi đổi authorization code lấy danh sách Page mà người dùng quản lý.
+4. Owner chọn Page. ShopPilot đăng ký webhook và lưu Page access token đã mã hóa bằng Fernet.
+5. Khi webhook tới, Page ID được ánh xạ về đúng `shop_id`; adapter giải mã token của đúng connection để trả lời.
+6. OAuth state chỉ dùng một lần, token không xuất hiện trong API trả về giao diện hoặc log ứng dụng.
 
 ## Xóa dữ liệu Meta
 

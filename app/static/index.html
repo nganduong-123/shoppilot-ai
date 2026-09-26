@@ -63,11 +63,12 @@
         <a href="/terms" target="_blank">Điều khoản</a>
         <a href="/data-deletion" target="_blank">Xóa dữ liệu</a>
       </div>
-      <div class="profile-row">
-        <span class="profile-avatar">DN</span>
-        <div><strong>Dương Thị Ngân</strong><small>Workspace owner</small></div>
-        <span class="online"></span>
-      </div>
+        <div class="profile-row">
+          <span class="profile-avatar" id="profile-avatar">DN</span>
+          <div><strong id="profile-name">Dương Thị Ngân</strong><small id="profile-role">Workspace owner</small></div>
+          <span class="online"></span>
+          <button type="button" class="logout-button" id="logout-button" title="Đăng xuất">↗</button>
+        </div>
     </aside>
 
     <main class="main-panel">
@@ -202,6 +203,7 @@
           <article class="integration-card channel-card">
             <div class="integration-card-head"><span class="integration-logo meta-logo">f</span><div><h3>Facebook Messenger</h3><p>Nhận tin Page vào Unified Inbox.</p></div><span class="connection-badge" id="meta-connection-badge">Chờ cấu hình</span></div>
             <div class="requirement-list" id="meta-requirements"><div class="requirement-loading">Đang kiểm tra cấu hình…</div></div>
+            <button type="button" class="meta-connect-button" id="meta-connect-button">Kết nối Facebook Page</button>
           </article>
 
           <article class="integration-card review-card">

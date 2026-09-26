@@ -11,6 +11,12 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: REGISTRATION_ENABLED
+        value: "true"
+      - key: TOKEN_ENCRYPTION_KEY
+        generateValue: true
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL

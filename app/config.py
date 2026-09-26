@@ -11,13 +11,25 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "ShopPilot AI"
-    app_version: str = "0.7.0"
+    app_version: str = "0.8.0"
     app_env: str = os.getenv("APP_ENV", "development")
     database_path: Path = BASE_DIR / os.getenv("DATABASE_PATH", "data/shoppilot.db")
     database_url: str | None = os.getenv("DATABASE_URL")
+    auth_required: bool = env_bool("AUTH_REQUIRED", False)
+    registration_enabled: bool = env_bool("REGISTRATION_ENABLED", True)
+    session_cookie_name: str = os.getenv("SESSION_COOKIE_NAME", "shoppilot_session")
+    session_days: int = int(os.getenv("SESSION_DAYS", "14"))
+    token_encryption_key: str | None = os.getenv("TOKEN_ENCRYPTION_KEY")
     groq_api_key: str | None = os.getenv("GROQ_API_KEY")
     groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
     groq_base_url: str = "https://api.groq.com/openai/v1"

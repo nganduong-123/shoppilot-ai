@@ -6,7 +6,7 @@
 
 Với hành động làm thay đổi dữ liệu, em không cho LLM tự xác nhận. Agent chỉ tạo draft; workflow Python yêu cầu khách xác nhận ở lượt sau, kiểm tra lại tồn kho rồi mới trừ hàng. Trường hợp khiếu nại hoặc thiếu căn cứ được chuyển nhân viên cùng toàn bộ ngữ cảnh.
 
-Hệ thống dùng FastAPI, PostgreSQL/SQLite, Groq và giao diện web responsive. Unified inbox nhận diện tín hiệu mua, đưa ca cần người lên đầu và cảnh báo SLA năm phút. Khi nhân viên tiếp quản, Copilot tóm tắt và soạn sẵn câu trả lời nhưng không tự gửi. Em thêm audit trace, 26 automated tests, 10 browser E2E checks và 16 evaluation scenarios để đo tool routing, tenant isolation và safety workflow.”
+Hệ thống dùng FastAPI, PostgreSQL/SQLite, Groq và giao diện web responsive. Unified inbox nhận diện tín hiệu mua, đưa ca cần người lên đầu và cảnh báo SLA năm phút. Khi nhân viên tiếp quản, Copilot tóm tắt và soạn sẵn câu trả lời nhưng không tự gửi. Chủ shop kết nối Page bằng Meta OAuth nên không chia sẻ mật khẩu; Page token được mã hóa và ánh xạ theo tenant. Em thêm audit trace, 31 automated tests, 10 browser E2E checks và 16 evaluation scenarios để đo tool routing, tenant isolation và safety workflow.”
 
 ## Câu hỏi thường gặp
 
