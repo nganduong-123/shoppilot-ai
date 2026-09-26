@@ -30,7 +30,7 @@ flowchart LR
 | `agent.py` | Quản lý vòng lặp model → tool → observation → trả lời |
 | `tools.py` | Thực thi nghiệp vụ có kiểm soát và ghi trace |
 | `repository.py` | Đọc/ghi dữ liệu, luôn giới hạn theo `shop_id` |
-| `database.py` | Schema SQLite, transaction và foreign key |
+| `database.py` | Schema và transaction dùng SQLite local hoặc PostgreSQL trên server |
 | `main.py` | HTTP API, validation và phục vụ giao diện |
 | `channels/` | Chuẩn hóa webhook từng nền tảng và gửi phản hồi |
 | `inbox.py` | Chống sự kiện trùng, lưu hội thoại, điều phối AI/người thật |
@@ -69,7 +69,7 @@ Background task trong tiến trình phù hợp cho bản demo. Bản production 
 
 ## Multi-tenant
 
-Một bản triển khai phục vụ nhiều shop. Mỗi `conversation`, `product` và `order` đều gắn với một `shop_id`. API nhận `slug`, giải ra shop trước rồi mới tạo tool context. Tool chỉ truy vấn catalog của shop trong context, nên Mint Fashion không thể tìm thấy sản phẩm Nova Tech.
+Một bản triển khai phục vụ nhiều shop. Mỗi `conversation`, `product` và `order` đều gắn với một `shop_id`. API nhận `slug`, giải ra shop trước rồi mới tạo tool context. Tool chỉ truy vấn catalog của shop trong context, nên MisterBox Men không thể tìm thấy sản phẩm Nova Tech.
 
 ## Agent loop
 

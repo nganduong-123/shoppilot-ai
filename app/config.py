@@ -14,9 +14,10 @@ load_dotenv(BASE_DIR / ".env")
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "ShopPilot AI"
-    app_version: str = "0.6.0"
+    app_version: str = "0.7.0"
     app_env: str = os.getenv("APP_ENV", "development")
     database_path: Path = BASE_DIR / os.getenv("DATABASE_PATH", "data/shoppilot.db")
+    database_url: str | None = os.getenv("DATABASE_URL")
     groq_api_key: str | None = os.getenv("GROQ_API_KEY")
     groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
     groq_base_url: str = "https://api.groq.com/openai/v1"

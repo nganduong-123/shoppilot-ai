@@ -31,7 +31,7 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 
 | Shop | Vertical | Domain-specific attributes |
 |---|---|---|
-| Mint Fashion | Fashion | Size, color, material, fit |
+| MisterBox Men | Men's fashion | Size, color, material, fit |
 | Lumi Beauty | Cosmetics | Skin type, ingredients, volume |
 | Nova Tech | Electronics | Connectivity, power, warranty |
 
@@ -62,7 +62,7 @@ Detailed design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 - Python 3.13, FastAPI and Pydantic
 - Groq OpenAI-compatible Chat Completions API
-- SQLite for the portfolio MVP
+- SQLite locally; PostgreSQL-ready persistence for server deployments
 - Responsive HTML/CSS/JavaScript console
 - Pytest, scenario evaluation and GitHub Actions
 - Docker and Docker Compose
@@ -81,6 +81,10 @@ Open:
 - OpenAPI: <http://127.0.0.1:8000/docs>
 
 The application still works in deterministic fallback mode if `GROQ_API_KEY` is absent.
+
+For durable server data, set `DATABASE_URL` to a PostgreSQL connection string. It
+takes precedence over `DATABASE_PATH`; local development and tests continue to use
+SQLite without extra setup.
 
 ### Manual setup
 
@@ -107,7 +111,7 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **23 automated tests passed**
+- **26 automated tests passed**
 - **10/10 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution workflow and integration readiness.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
@@ -150,7 +154,7 @@ app/
 ├── channels/         # Website and Meta Messenger adapters
 ├── tools.py          # Business tools and confirmation workflow
 ├── repository.py     # Tenant-scoped data access
-├── database.py       # SQLite schema and transactions
+├── database.py       # SQLite/PostgreSQL schema and transactions
 ├── main.py           # FastAPI endpoints
 └── static/           # Chat, catalog and observability UI
 evals/                # Scenario-based agent evaluation
@@ -169,7 +173,7 @@ docs/                 # Architecture and interview learning material
 
 ## Current limitations
 
-This repository is a portfolio MVP. Catalog, shipping rules and order fulfillment are simulated. The Meta adapter currently connects one pilot Page through environment variables. A production version would add OAuth onboarding for many shops, PostgreSQL, authentication and RBAC, encrypted customer data, rate limiting, a durable job queue, real commerce/transport adapters, online evaluation with human labels and production monitoring.
+This repository is a portfolio MVP. Catalog, shipping rules and order fulfillment are simulated. The Meta adapter currently connects one pilot Page through environment variables. PostgreSQL persistence is supported through `DATABASE_URL`; a production version would additionally add OAuth onboarding for many shops, authentication and RBAC, encrypted customer data, rate limiting, a durable job queue, real commerce/transport adapters, online evaluation with human labels and production monitoring.
 
 ## Embed the website widget
 

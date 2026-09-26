@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import hashlib
-import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from app.database import db_session, json_dumps, json_loads, row_to_dict, utc_now
+from app.database import (
+    db_session,
+    is_integrity_error,
+    is_unique_violation,
+    json_dumps,
+    json_loads,
+    row_to_dict,
+    utc_now,
+)
 
 
 def _hydrate_product(row: Any) -> dict[str, Any]:
@@ -396,10 +403,12 @@ class Repository:
                     ),
                 )
             return True
-        except sqlite3.IntegrityError as exc:
+        except Exception as exc:
             # A repeated platform webhook must not create a second reply.
-            if "UNIQUE constraint failed" in str(exc):
+            if is_unique_violation(exc):
                 return False
+            if not is_integrity_error(exc):
+                raise
             raise
 
     def mark_channel_event(

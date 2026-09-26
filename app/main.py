@@ -4,7 +4,6 @@ import csv
 import io
 import json
 import secrets
-import sqlite3
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 from uuid import uuid4
@@ -21,7 +20,7 @@ from app.channels.meta import MetaMessengerAdapter
 from app.channels.web import WebChannelAdapter
 from app.config import BASE_DIR, settings
 from app.copilot import inbox_copilot
-from app.database import init_database
+from app.database import init_database, is_integrity_error, using_postgres
 from app.inbox import inbox_service
 from app.repository import repository
 from app.schemas import (
@@ -93,6 +92,7 @@ def health() -> dict:
         "version": settings.app_version,
         "llm_configured": bool(settings.groq_api_key),
         "model": settings.groq_model if settings.groq_api_key else "rule-fallback",
+        "storage": "postgresql" if using_postgres() else "sqlite",
         "channels": {
             "web": True,
             "messenger": direct_messenger or make_messenger,
@@ -144,7 +144,9 @@ def list_shops() -> list[dict]:
 def create_shop(payload: ShopCreate) -> dict:
     try:
         return repository.create_shop(payload.model_dump())
-    except sqlite3.IntegrityError as exc:
+    except Exception as exc:
+        if not is_integrity_error(exc):
+            raise
         raise HTTPException(status_code=409, detail="Slug của shop đã tồn tại.") from exc
 
 
@@ -171,7 +173,9 @@ def create_product(slug: str, payload: ProductCreate) -> dict:
     shop = require_shop(slug)
     try:
         return repository.create_product(shop["id"], payload.model_dump())
-    except sqlite3.IntegrityError as exc:
+    except Exception as exc:
+        if not is_integrity_error(exc):
+            raise
         raise HTTPException(status_code=409, detail="SKU đã tồn tại trong shop.") from exc
 
 
@@ -210,7 +214,9 @@ async def import_products(slug: str, file: UploadFile = File(...)) -> dict:
                 },
             )
             imported += 1
-        except (ValueError, sqlite3.IntegrityError) as exc:
+        except Exception as exc:
+            if not isinstance(exc, ValueError) and not is_integrity_error(exc):
+                raise
             errors.append({"line": line_number, "error": str(exc)})
     return {"imported": imported, "errors": errors}
 

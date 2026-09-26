@@ -6,7 +6,7 @@
 
 Với hành động làm thay đổi dữ liệu, em không cho LLM tự xác nhận. Agent chỉ tạo draft; workflow Python yêu cầu khách xác nhận ở lượt sau, kiểm tra lại tồn kho rồi mới trừ hàng. Trường hợp khiếu nại hoặc thiếu căn cứ được chuyển nhân viên cùng toàn bộ ngữ cảnh.
 
-Hệ thống dùng FastAPI, SQLite, Groq và giao diện web responsive. Unified inbox nhận diện tín hiệu mua, đưa ca cần người lên đầu và cảnh báo SLA năm phút. Khi nhân viên tiếp quản, Copilot tóm tắt và soạn sẵn câu trả lời nhưng không tự gửi. Em thêm audit trace, 21 automated tests, 10 browser E2E checks và 16 evaluation scenarios để đo tool routing, tenant isolation và safety workflow.”
+Hệ thống dùng FastAPI, PostgreSQL/SQLite, Groq và giao diện web responsive. Unified inbox nhận diện tín hiệu mua, đưa ca cần người lên đầu và cảnh báo SLA năm phút. Khi nhân viên tiếp quản, Copilot tóm tắt và soạn sẵn câu trả lời nhưng không tự gửi. Em thêm audit trace, 26 automated tests, 10 browser E2E checks và 16 evaluation scenarios để đo tool routing, tenant isolation và safety workflow.”
 
 ## Câu hỏi thường gặp
 
@@ -40,7 +40,7 @@ Không. Kết quả chỉ đúng trên 16 scenario đã định nghĩa ở chế
 
 ### Hạn chế hiện tại là gì?
 
-Catalog và shipping đang là dữ liệu mô phỏng; chưa kết nối Sapo, Haravan, KiotViet hay đơn vị vận chuyển. SQLite phù hợp demo, production nên dùng PostgreSQL, authentication, RBAC và mã hóa thông tin khách hàng.
+Catalog và shipping đang là dữ liệu mô phỏng; chưa kết nối Sapo, Haravan, KiotViet hay đơn vị vận chuyển. Ứng dụng đã hỗ trợ PostgreSQL cho dữ liệu bền vững trên server; production vẫn cần authentication, RBAC và mã hóa thông tin khách hàng.
 
 ## Dòng CV đề xuất
 
