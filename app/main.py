@@ -115,6 +115,10 @@ def register_account(payload: RegisterRequest, response: Response) -> dict:
         raise HTTPException(status_code=403, detail="Đăng ký tài khoản đang tạm đóng.")
     try:
         user, token = auth_service.register(payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409, detail="Email hoặc mã cửa hàng đã được sử dụng."
+        ) from exc
     except Exception as exc:
         if not is_integrity_error(exc):
             raise

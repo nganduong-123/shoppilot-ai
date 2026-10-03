@@ -78,3 +78,28 @@ def test_required_auth_scopes_dashboard_to_member_shops(monkeypatch):
     assert [shop["slug"] for shop in shops.json()] == ["cua-hang-test"]
     assert own_metrics.status_code == 200
     assert other_metrics.status_code == 403
+
+
+def test_owner_can_claim_an_unowned_seeded_demo_shop():
+    payload = {
+        **REGISTER_PAYLOAD,
+        "email": "mint-owner@example.com",
+        "shop_name": "MisterBox Men",
+        "shop_slug": "mint-fashion",
+    }
+
+    with TestClient(app) as owner_client:
+        registered = owner_client.post("/api/auth/register", json=payload)
+        own_metrics = owner_client.get("/api/shops/mint-fashion/metrics")
+
+    with TestClient(app) as second_client:
+        duplicate = second_client.post(
+            "/api/auth/register",
+            json={**payload, "email": "second-owner@example.com"},
+        )
+
+    assert registered.status_code == 201
+    assert registered.json()["shops"][0]["slug"] == "mint-fashion"
+    assert registered.json()["shops"][0]["product_count"] > 0
+    assert own_metrics.status_code == 200
+    assert duplicate.status_code == 409

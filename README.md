@@ -2,6 +2,12 @@
 
 **Auditable multi-tenant sales and support agent for online shops.**
 
+**Live demo:** https://shoppilot-ai-bt8u.onrender.com/<br>
+The deployed demo uses PostgreSQL, secure shop accounts and the Groq-hosted
+`openai/gpt-oss-120b` model. New owners create an account on the login screen;
+the first owner who uses the seeded `mint-fashion` slug receives the prepared
+MisterBox Men demo workspace.
+
 ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped catalog, check live inventory, retrieve store policies, calculate shipping, prepare draft orders and hand complex conversations to a human. Order confirmation is enforced by deterministic application code, so the LLM cannot complete a write action on its own.
 
 > Portfolio project by **Dương Thị Ngân** · Student ID **2A202602808**
@@ -64,7 +70,7 @@ Detailed design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 - Python 3.13, FastAPI and Pydantic
 - Groq OpenAI-compatible Chat Completions API
-- SQLite locally; PostgreSQL-ready persistence for server deployments
+- SQLite locally; PostgreSQL persistence on the Render deployment
 - Scrypt authentication, role-based tenant access and encrypted Meta tokens
 - Responsive HTML/CSS/JavaScript console
 - Pytest, scenario evaluation and GitHub Actions
@@ -119,7 +125,7 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **31 automated tests passed**
+- **32 automated tests passed**
 - **10/10 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution workflow and integration readiness.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing

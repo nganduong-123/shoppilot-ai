@@ -1,3 +1,9 @@
+databases:
+  - name: shoppilot-db
+    plan: free
+    databaseName: shoppilot
+    user: shoppilot
+
 services:
   - type: web
     name: shoppilot-ai
@@ -10,7 +16,9 @@ services:
       - key: PUBLIC_BASE_URL
         sync: false
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: shoppilot-db
+          property: connectionString
       - key: AUTH_REQUIRED
         value: "true"
       - key: REGISTRATION_ENABLED
@@ -20,7 +28,7 @@ services:
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
-        value: openai/gpt-oss-20b
+        value: openai/gpt-oss-120b
       - key: META_SHOP_SLUG
         value: mint-fashion
       - key: META_PAGE_ID

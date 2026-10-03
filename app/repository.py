@@ -116,23 +116,37 @@ class Repository:
                 """,
                 (user_id, email, display_name, password_hash, now),
             )
-            cursor = connection.execute(
-                """
-                INSERT INTO shops
-                    (slug, name, category, tagline, policy_text, voice, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    shop["slug"], shop["name"], shop["category"], shop["tagline"],
-                    shop["policy_text"], shop["voice"], now,
-                ),
-            )
+            existing_shop = connection.execute(
+                "SELECT id FROM shops WHERE slug = ?",
+                (shop["slug"],),
+            ).fetchone()
+            if existing_shop:
+                member = connection.execute(
+                    "SELECT 1 FROM shop_members WHERE shop_id = ? LIMIT 1",
+                    (existing_shop["id"],),
+                ).fetchone()
+                if member:
+                    raise ValueError("Shop slug is already owned")
+                shop_id = existing_shop["id"]
+            else:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO shops
+                        (slug, name, category, tagline, policy_text, voice, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        shop["slug"], shop["name"], shop["category"], shop["tagline"],
+                        shop["policy_text"], shop["voice"], now,
+                    ),
+                )
+                shop_id = cursor.lastrowid
             connection.execute(
                 """
                 INSERT INTO shop_members (shop_id, user_id, role, created_at)
                 VALUES (?, ?, 'owner', ?)
                 """,
-                (cursor.lastrowid, user_id, now),
+                (shop_id, user_id, now),
             )
             row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
             return dict(row)
