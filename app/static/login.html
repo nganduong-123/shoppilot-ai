@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Đăng nhập · ShopPilot AI</title>
+  <style>
+    :root{color-scheme:dark;--bg:#07110f;--panel:#0d1c19;--line:#1c3530;--text:#edf8f5;--muted:#809a94;--accent:#24d5b5;--danger:#ff8192}*{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,system-ui,sans-serif;background:radial-gradient(circle at 15% 10%,rgba(36,213,181,.13),transparent 28%),radial-gradient(circle at 90% 80%,rgba(117,87,255,.12),transparent 28%),var(--bg);color:var(--text)}main{min-height:100vh;display:grid;grid-template-columns:minmax(320px,1fr) minmax(420px,560px)}.intro{padding:8vw;display:flex;flex-direction:column;justify-content:center}.brand{display:flex;align-items:center;gap:12px;font-weight:900;letter-spacing:-.4px}.mark{width:42px;height:42px;display:grid;place-items:center;border-radius:13px;background:var(--accent);color:#05201a;font-size:20px}.intro h1{max-width:720px;margin:48px 0 18px;font-size:clamp(40px,5vw,72px);line-height:1.02;letter-spacing:-3px}.intro h1 span{color:var(--accent)}.intro>p{max-width:620px;color:var(--muted);font-size:17px;line-height:1.7}.points{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:38px}.points article{padding:16px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.02)}.points strong,.points small{display:block}.points strong{font-size:13px}.points small{margin-top:7px;color:var(--muted);font-size:11px;line-height:1.45}.auth-wrap{padding:24px;display:flex;align-items:center}.card{width:100%;padding:30px;border:1px solid var(--line);border-radius:26px;background:rgba(13,28,25,.94);box-shadow:0 30px 100px rgba(0,0,0,.35)}.tabs{display:grid;grid-template-columns:1fr 1fr;padding:4px;border-radius:12px;background:#081411}.tabs button{padding:10px;border:0;border-radius:9px;background:transparent;color:var(--muted);font-weight:800;cursor:pointer}.tabs button.active{background:#18342e;color:var(--accent)}h2{margin:28px 0 5px;font-size:25px}form>p{margin:0 0 22px;color:var(--muted);font-size:13px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.field{margin-bottom:14px}.field.full{grid-column:1/-1}label{display:block;margin-bottom:7px;color:#a9beb9;font-size:11px;font-weight:700}input{width:100%;padding:12px 13px;border:1px solid var(--line);border-radius:11px;outline:0;background:#081411;color:var(--text);font-size:13px}input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(36,213,181,.09)}.submit{width:100%;margin-top:6px;padding:13px;border:0;border-radius:11px;background:var(--accent);color:#05201a;font-weight:900;cursor:pointer}.submit:disabled{opacity:.5}.notice{margin-top:17px;padding:12px;border:1px solid rgba(36,213,181,.15);border-radius:11px;background:rgba(36,213,181,.05);color:#91aaa4;font-size:11px;line-height:1.55}.error{min-height:18px;margin:12px 0 0;color:var(--danger);font-size:11px}.hidden{display:none}@media(max-width:900px){main{display:block}.intro{padding:45px 24px 25px}.intro h1{margin:30px 0 12px;font-size:42px}.points{display:none}.auth-wrap{padding:18px 18px 45px}.card{padding:22px}.grid{display:block}}
+  </style>
+</head>
+<body>
+<main>
+  <section class="intro">
+    <div class="brand"><span class="mark">S</span> SHOPPILOT AI</div>
+    <h1>Không bỏ sót khách từ <span>quảng cáo.</span></h1>
+    <p>Một hộp thư cho Website và Facebook Messenger, kết hợp AI với nhân viên để tư vấn nhanh mà vẫn kiểm soát được giá, tồn kho và đơn hàng.</p>
+    <div class="points">
+      <article><strong>AI có căn cứ</strong><small>Trả lời từ catalog và chính sách của đúng shop.</small></article>
+      <article><strong>Người thật kiểm soát</strong><small>Tiếp quản ngay khi cần chốt đơn hoặc xử lý khiếu nại.</small></article>
+      <article><strong>Không chia sẻ mật khẩu</strong><small>Facebook được kết nối trên màn hình cấp quyền chính thức của Meta.</small></article>
+    </div>
+  </section>
+  <section class="auth-wrap">
+    <div class="card">
+      <div class="tabs"><button id="login-tab" class="active">Đăng nhập</button><button id="register-tab">Tạo tài khoản</button></div>
+      <form id="login-form">
+        <h2>Chào mừng trở lại</h2><p>Đăng nhập để quản lý inbox và nhân viên.</p>
+        <div class="field"><label>Email</label><input name="email" type="email" autocomplete="email" required></div>
+        <div class="field"><label>Mật khẩu ShopPilot</label><input name="password" type="password" autocomplete="current-password" required></div>
+        <button class="submit">Đăng nhập</button><div class="error"></div>
+      </form>
+      <form id="register-form" class="hidden">
+        <h2>Tạo workspace</h2><p>Tạo tài khoản ShopPilot và cửa hàng đầu tiên.</p>
+        <div class="grid">
+          <div class="field"><label>Họ tên</label><input name="display_name" autocomplete="name" required></div>
+          <div class="field"><label>Email</label><input name="email" type="email" autocomplete="email" required></div>
+          <div class="field"><label>Tên cửa hàng</label><input name="shop_name" required></div>
+          <div class="field"><label>Mã cửa hàng</label><input name="shop_slug" pattern="[a-z0-9-]{3,50}" placeholder="vi-du-shop" required></div>
+          <div class="field full"><label>Ngành hàng</label><input name="category" placeholder="Thời trang, mỹ phẩm..." required></div>
+          <div class="field full"><label>Mật khẩu ShopPilot (tối thiểu 10 ký tự)</label><input name="password" type="password" minlength="10" autocomplete="new-password" required></div>
+        </div>
+        <button class="submit">Tạo tài khoản và cửa hàng</button><div class="error"></div>
+      </form>
+      <div class="notice"><strong>Lưu ý:</strong> Đây là mật khẩu ShopPilot. Hệ thống không yêu cầu mật khẩu Facebook; khi kết nối Page, anh/chị đăng nhập trực tiếp trên trang của Meta.</div>
+    </div>
+  </section>
+</main>
+<script>
+const $=s=>document.querySelector(s),forms={login:$("#login-form"),register:$("#register-form")};
+function tab(name){for(const [key,form] of Object.entries(forms))form.classList.toggle("hidden",key!==name);$("#login-tab").classList.toggle("active",name==="login");$("#register-tab").classList.toggle("active",name==="register")}
+$("#login-tab").onclick=()=>tab("login");$("#register-tab").onclick=()=>tab("register");
+function slugify(value){return value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/đ/g,"d").replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,50)}
+forms.register.shop_name.addEventListener("input",()=>{if(!forms.register.shop_slug.dataset.edited)forms.register.shop_slug.value=slugify(forms.register.shop_name.value)});forms.register.shop_slug.addEventListener("input",()=>forms.register.shop_slug.dataset.edited="1");
+async function submit(name,path,event){event.preventDefault();const form=forms[name],button=form.querySelector(".submit"),error=form.querySelector(".error");button.disabled=true;error.textContent="";const body=Object.fromEntries(new FormData(form));try{const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||"Không thể hoàn tất yêu cầu");location.href="/"}catch(exc){error.textContent=exc.message}finally{button.disabled=false}}
+forms.login.onsubmit=e=>submit("login","/api/auth/login",e);forms.register.onsubmit=e=>submit("register","/api/auth/register",e);
+fetch("/api/auth/me").then(r=>r.json()).then(data=>{if(data.authenticated)location.href="/";if(!data.registration_enabled)$("#register-tab").hidden=true}).catch(()=>{});
+</script>
+</body>
+</html>

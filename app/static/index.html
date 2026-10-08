@@ -32,6 +32,10 @@
 
       <nav class="nav-list" aria-label="Điều hướng chính">
         <button class="nav-item active" data-view="inbox">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM4 14h4l2 3h4l2-3h4"/></svg></span>
+          Unified inbox <span class="nav-count" id="inbox-count">0</span>
+        </button>
+        <button class="nav-item" data-view="playground">
           <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg></span>
           Agent playground <span class="pulse-dot"></span>
         </button>
@@ -43,6 +47,10 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg></span>
           Traces & metrics
         </button>
+        <button class="nav-item" data-view="integrations">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M8 12h8M5 8l-3 4 3 4m14-8 3 4-3 4M9 5l6 14"/></svg></span>
+          Integrations <span class="nav-count" id="integration-count">1/2</span>
+        </button>
       </nav>
 
       <div class="sidebar-note">
@@ -50,16 +58,22 @@
         <strong>Human-in-the-loop</strong>
         <p>Mọi đơn hàng đều cần khách xác nhận trước khi hoàn tất.</p>
       </div>
-      <div class="profile-row">
-        <span class="profile-avatar">DN</span>
-        <div><strong>Dương Thị Ngân</strong><small>Workspace owner</small></div>
-        <span class="online"></span>
+      <div class="legal-links" aria-label="Thông tin pháp lý">
+        <a href="/privacy" target="_blank">Quyền riêng tư</a>
+        <a href="/terms" target="_blank">Điều khoản</a>
+        <a href="/data-deletion" target="_blank">Xóa dữ liệu</a>
       </div>
+        <div class="profile-row">
+          <span class="profile-avatar" id="profile-avatar">DN</span>
+          <div><strong id="profile-name">Dương Thị Ngân</strong><small id="profile-role">Workspace owner</small></div>
+          <span class="online"></span>
+          <button type="button" class="logout-button" id="logout-button" title="Đăng xuất">↗</button>
+        </div>
     </aside>
 
     <main class="main-panel">
       <header class="topbar">
-        <div><p class="eyebrow" id="view-eyebrow">AGENT PLAYGROUND</p><h1 id="view-title">Kiểm thử trợ lý bán hàng</h1></div>
+        <div><p class="eyebrow" id="view-eyebrow">UNIFIED INBOX</p><h1 id="view-title">Hộp thư bán hàng đa kênh</h1></div>
         <div class="topbar-actions">
           <span class="health-pill"><i></i><span id="model-name">Đang kiểm tra model</span></span>
           <a class="icon-button" href="/docs" target="_blank" aria-label="Mở API docs" title="API docs">
@@ -69,6 +83,53 @@
       </header>
 
       <section class="view active" id="view-inbox">
+        <div class="inbox-toolbar">
+          <div><p class="section-kicker">OMNICHANNEL</p><h2>Tất cả khách hàng, một nơi xử lý</h2><p>AI trả lời câu hỏi thường gặp; nhân viên tiếp quản các ca cần kỹ năng chốt đơn.</p></div>
+          <div class="channel-status"><span><i class="web"></i>Website đã bật</span><span id="meta-channel-status"><i></i>Messenger chờ kết nối</span></div>
+        </div>
+        <div class="inbox-summary">
+          <article><span>Cần xử lý</span><strong id="inbox-attention">0</strong><small>đang chờ nhân viên</small></article>
+          <article><span>Quá SLA 5 phút</span><strong id="inbox-overdue">0</strong><small>ưu tiên trả lời ngay</small></article>
+          <article><span>Khách có ý định mua</span><strong id="inbox-sales-leads">0</strong><small>có tín hiệu chốt đơn</small></article>
+          <article><span>AI đang trực</span><strong id="inbox-automated">0</strong><small>hội thoại tự động</small></article>
+        </div>
+        <div class="inbox-layout">
+          <aside class="conversation-panel">
+            <div class="conversation-head"><strong>Hội thoại</strong><button class="text-button" id="refresh-inbox">Làm mới</button></div>
+            <div class="inbox-filters" aria-label="Lọc hội thoại">
+              <button class="active" type="button" data-inbox-filter="all">Tất cả</button>
+              <button type="button" data-inbox-filter="attention">Cần xử lý</button>
+              <button type="button" data-inbox-filter="resolved">Đã xong</button>
+            </div>
+            <div id="conversation-list" class="conversation-list"></div>
+          </aside>
+          <section class="thread-panel">
+            <div class="thread-empty" id="thread-empty"><span>✦</span><strong>Chưa chọn hội thoại</strong><p>Gửi thử tin nhắn từ widget website hoặc kết nối Facebook Page.</p><a href="/static/widget.html?shop=mint-fashion" target="_blank">Mở widget thử nghiệm</a></div>
+            <div id="thread-content" class="thread-content" hidden>
+              <header class="thread-head">
+                <div><strong id="thread-customer">Khách hàng</strong><small><span id="thread-channel">Website</span> · <span id="thread-status">AI đang xử lý</span></small></div>
+                <div class="thread-actions">
+                  <button type="button" class="workflow-button copilot-button" id="copilot-assist">✦ AI gợi ý</button>
+                  <button type="button" class="workflow-button" id="takeover-conversation">Nhận xử lý</button>
+                  <button type="button" class="workflow-button complete" id="resolve-conversation">Hoàn tất</button>
+                  <label class="bot-toggle"><input type="checkbox" id="bot-enabled" checked><span></span><em id="bot-label">AI đang trả lời</em></label>
+                </div>
+              </header>
+              <div class="thread-messages" id="thread-messages"></div>
+              <aside class="copilot-card" id="copilot-card" hidden>
+                <header><div><span>SHOPPILOT COPILOT</span><strong>Bản nháp dành cho nhân viên</strong></div><button type="button" id="dismiss-copilot" aria-label="Đóng gợi ý">×</button></header>
+                <div class="copilot-summary"><small>Tóm tắt hội thoại</small><p id="copilot-summary"></p></div>
+                <div class="copilot-draft"><small>Câu trả lời đề xuất</small><p id="copilot-draft"></p></div>
+                <div class="copilot-foot"><div id="copilot-risks" class="copilot-risks"></div><button type="button" id="use-copilot">Chèn vào ô trả lời</button></div>
+              </aside>
+              <form class="thread-composer" id="thread-reply-form"><input id="thread-reply-input" maxlength="2000" placeholder="Nhân viên nhập câu trả lời…"><button type="submit">Gửi</button></form>
+              <div class="handoff-note">Copilot chỉ soạn nháp. Nhân viên luôn kiểm tra và chủ động nhấn gửi.</div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-playground">
         <div class="metric-strip">
           <article><span>Cuộc hội thoại</span><strong id="metric-conversations">0</strong><small>trong workspace</small></article>
           <article><span>Tự động xử lý</span><strong id="metric-automation">100%</strong><small>không cần chuyển người</small></article>
@@ -124,6 +185,42 @@
         <div class="trace-table-card">
           <div class="table-head"><div><strong>Trace gần nhất</strong><small id="trace-conversation-id">Chưa có conversation</small></div><button id="refresh-trace" class="text-button">Làm mới</button></div>
           <div id="full-trace" class="full-trace"></div>
+        </div>
+      </section>
+
+      <section class="view" id="view-integrations">
+        <div class="integration-hero">
+          <div><p class="section-kicker">CHANNEL SETUP</p><h2>Kết nối các kênh bán hàng</h2><p>Kiểm tra cấu hình, lấy URL callback và chuẩn bị hồ sơ Meta App Review tại một nơi.</p></div>
+          <span class="audit-badge">NO SECRETS EXPOSED</span>
+        </div>
+        <div class="integration-grid">
+          <article class="integration-card channel-card">
+            <div class="integration-card-head"><span class="integration-logo web-logo">W</span><div><h3>Website widget</h3><p>Nhúng trợ lý vào website hiện có.</p></div><span class="connection-badge connected">Đã bật</span></div>
+            <div class="code-block"><code>&lt;script src="/static/widget.js" data-shop="mint-fashion"&gt;&lt;/script&gt;</code></div>
+            <a class="integration-action" href="/static/widget.html?shop=mint-fashion" target="_blank">Mở widget thử nghiệm ↗</a>
+          </article>
+
+          <article class="integration-card channel-card">
+            <div class="integration-card-head"><span class="integration-logo meta-logo">f</span><div><h3>Facebook Messenger</h3><p>Nhận tin Page vào Unified Inbox.</p></div><span class="connection-badge" id="meta-connection-badge">Chờ cấu hình</span></div>
+            <div class="requirement-list" id="meta-requirements"><div class="requirement-loading">Đang kiểm tra cấu hình…</div></div>
+            <button type="button" class="meta-connect-button" id="meta-connect-button">Kết nối Facebook Page</button>
+          </article>
+
+          <article class="integration-card review-card">
+            <div class="integration-card-head"><span class="integration-logo shield-logo">✓</span><div><h3>Meta App Review kit</h3><p>Các URL công khai cần điền trong Meta Dashboard.</p></div></div>
+            <div class="review-url-list" id="meta-review-urls"></div>
+          </article>
+
+          <article class="integration-card roadmap-card">
+            <p class="section-kicker">PILOT CHECKLIST</p>
+            <h3>Đường tới bản chạy thật</h3>
+            <ol class="setup-steps">
+              <li class="done"><span>1</span><div><strong>Lõi omnichannel</strong><small>Inbox, AI/human handoff và chống webhook trùng.</small></div></li>
+              <li class="done"><span>2</span><div><strong>Privacy controls</strong><small>Chính sách, điều khoản và callback xóa dữ liệu.</small></div></li>
+              <li><span>3</span><div><strong>Kết nối Page pilot</strong><small>Tạo Meta app, webhook và Page access token.</small></div></li>
+              <li><span>4</span><div><strong>App Review</strong><small>Quay video, cung cấp tài khoản test và xin Advanced Access.</small></div></li>
+            </ol>
+          </article>
         </div>
       </section>
     </main>

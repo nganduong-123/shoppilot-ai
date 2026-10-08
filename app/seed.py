@@ -6,9 +6,9 @@ from app.database import db_session, json_dumps, utc_now
 DEMO_SHOPS = [
     {
         "slug": "mint-fashion",
-        "name": "Mint Fashion",
+        "name": "MisterBox Men",
         "category": "Thời trang",
-        "tagline": "Trang phục tối giản cho nhịp sống hiện đại",
+        "tagline": "Thời trang nam gọn gàng cho nhịp sống hiện đại",
         "primary_color": "#24d5b5",
         "accent_color": "#7557ff",
         "voice": "Thân thiện, tinh tế, xưng em và gọi khách là anh/chị. Trả lời ngắn gọn.",
@@ -158,6 +158,19 @@ DEMO_SHOPS = [
 
 def seed_demo_data() -> None:
     with db_session() as connection:
+        connection.execute(
+            """
+            UPDATE shops
+            SET name = ?, tagline = ?
+            WHERE slug = ? AND name = ?
+            """,
+            (
+                "MisterBox Men",
+                "Thời trang nam gọn gàng cho nhịp sống hiện đại",
+                "mint-fashion",
+                "Mint Fashion",
+            ),
+        )
         existing = connection.execute("SELECT COUNT(*) AS count FROM shops").fetchone()["count"]
         if existing:
             return
