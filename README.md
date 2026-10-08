@@ -4,9 +4,8 @@
 
 **Live demo:** https://shoppilot-ai-bt8u.onrender.com/<br>
 The deployed demo uses PostgreSQL, secure shop accounts and the Groq-hosted
-`openai/gpt-oss-120b` model. New owners create an account on the login screen;
-the first owner who uses the seeded `mint-fashion` slug receives the prepared
-MisterBox Men demo workspace.
+`openai/gpt-oss-120b` model. Owners create an account on the login screen, manage
+their own tenant-scoped catalog and connect a Facebook Page from Integrations.
 
 ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped catalog, check live inventory, retrieve store policies, calculate shipping, prepare draft orders and hand complex conversations to a human. Order confirmation is enforced by deterministic application code, so the LLM cannot complete a write action on its own.
 
@@ -125,7 +124,7 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **32 automated tests passed**
+- **37 automated tests passed**
 - **10/10 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution workflow and integration readiness.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
@@ -138,6 +137,7 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `GET` | `/api/shops` | List tenant workspaces |
+| `PATCH` | `/api/shops/{slug}` | Update a managed shop's profile, policy and agent voice |
 | `GET` | `/api/shops/{slug}/products` | Read tenant-scoped catalog |
 | `POST` | `/api/shops/{slug}/chat` | Run the sales agent |
 | `POST` | `/api/channels/web/{slug}/messages` | Receive a website-widget message |
@@ -191,7 +191,7 @@ docs/                 # Architecture and interview learning material
 
 ## Current limitations
 
-This repository is a portfolio MVP. Catalog, shipping rules and order fulfillment are simulated. Account sessions, tenant roles, PostgreSQL and encrypted Meta OAuth onboarding are implemented. A production version would additionally add email verification/password recovery, rate limiting, a durable job queue, real commerce/transport adapters, online evaluation with human labels, production monitoring and Meta Advanced Access approval.
+This repository is a portfolio MVP. Catalog, shipping rules and order fulfillment are simulated. Account sessions, tenant roles, PostgreSQL and encrypted Meta OAuth onboarding are implemented. A production version would additionally add email verification/password recovery, rate limiting, a durable job queue, real commerce/transport adapters, online evaluation with human labels, production monitoring and Meta Advanced Access approval for public users outside the app's roles.
 
 ## Embed the website widget
 

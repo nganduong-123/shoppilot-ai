@@ -21,7 +21,7 @@ def env_bool(name: str, default: bool = False) -> bool:
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "ShopPilot AI"
-    app_version: str = "0.8.1"
+    app_version: str = "0.8.2"
     app_env: str = os.getenv("APP_ENV", "development")
     database_path: Path = BASE_DIR / os.getenv("DATABASE_PATH", "data/shoppilot.db")
     database_url: str | None = os.getenv("DATABASE_URL")

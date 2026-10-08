@@ -37,6 +37,7 @@ from app.schemas import (
     MetaConnectionComplete,
     RegisterRequest,
     ShopCreate,
+    ShopUpdate,
     WebChannelMessage,
 )
 from app.seed import seed_demo_data
@@ -318,6 +319,12 @@ def require_shop(slug: str) -> dict:
 @app.get("/api/shops/{slug}")
 def get_shop(slug: str) -> dict:
     return require_shop(slug)
+
+
+@app.patch("/api/shops/{slug}")
+def update_shop(slug: str, payload: ShopUpdate, request: Request) -> dict:
+    shop = require_managed_shop(slug, request)
+    return repository.update_shop(shop["id"], payload.model_dump(exclude_unset=True))
 
 
 @app.get("/api/shops/{slug}/products")

@@ -264,6 +264,25 @@ class Repository:
             row = connection.execute("SELECT * FROM shops WHERE id = ?", (cursor.lastrowid,)).fetchone()
             return dict(row)
 
+    def update_shop(self, shop_id: int, data: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"name", "category", "tagline", "policy_text", "voice"}
+        updates = {key: value for key, value in data.items() if key in allowed and value is not None}
+        if not updates:
+            shop = self.get_shop_by_id(shop_id)
+            if not shop:
+                raise ValueError("Shop not found")
+            return shop
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        with db_session() as connection:
+            connection.execute(
+                f"UPDATE shops SET {assignments} WHERE id = ?",
+                (*updates.values(), shop_id),
+            )
+            row = connection.execute("SELECT * FROM shops WHERE id = ?", (shop_id,)).fetchone()
+            if not row:
+                raise ValueError("Shop not found")
+            return dict(row)
+
     def list_products(self, shop_id: int, active_only: bool = True) -> list[dict[str, Any]]:
         query = "SELECT * FROM products WHERE shop_id = ?"
         params: list[Any] = [shop_id]

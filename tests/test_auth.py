@@ -80,6 +80,33 @@ def test_required_auth_scopes_dashboard_to_member_shops(monkeypatch):
     assert other_metrics.status_code == 403
 
 
+def test_owner_can_update_shop_profile_but_not_another_tenant(monkeypatch):
+    auth_settings = replace(settings, auth_required=True)
+    monkeypatch.setattr(main_module, "settings", auth_settings)
+    monkeypatch.setattr(auth_module, "settings", auth_settings)
+
+    with TestClient(app) as owner_client:
+        registered = owner_client.post("/api/auth/register", json=REGISTER_PAYLOAD)
+        updated = owner_client.patch(
+            "/api/shops/cua-hang-test",
+            json={
+                "tagline": "Thời trang thiết thực cho mỗi ngày",
+                "policy_text": "Đổi sản phẩm nguyên tem trong bảy ngày kể từ ngày nhận hàng.",
+                "voice": "Thân thiện, rõ ràng và không suy đoán thông tin.",
+            },
+        )
+        forbidden = owner_client.patch(
+            "/api/shops/mint-fashion",
+            json={"tagline": "Không được phép sửa dữ liệu của tenant khác"},
+        )
+
+    assert registered.status_code == 201
+    assert updated.status_code == 200
+    assert updated.json()["tagline"] == "Thời trang thiết thực cho mỗi ngày"
+    assert "bảy ngày" in updated.json()["policy_text"]
+    assert forbidden.status_code == 403
+
+
 def test_owner_can_claim_an_unowned_seeded_demo_shop():
     payload = {
         **REGISTER_PAYLOAD,

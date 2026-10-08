@@ -30,6 +30,14 @@ class ShopCreate(BaseModel):
     voice: str = Field(default="Thân thiện, ngắn gọn và trung thực.", max_length=500)
 
 
+class ShopUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=100)
+    category: str | None = Field(default=None, min_length=2, max_length=60)
+    tagline: str | None = Field(default=None, min_length=2, max_length=160)
+    policy_text: str | None = Field(default=None, min_length=20, max_length=8000)
+    voice: str | None = Field(default=None, min_length=2, max_length=500)
+
+
 class ProductCreate(BaseModel):
     sku: str = Field(min_length=2, max_length=50)
     name: str = Field(min_length=2, max_length=160)

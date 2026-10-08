@@ -15,9 +15,9 @@ Endpoint `GET` dùng để Meta xác minh webhook. Endpoint `POST` kiểm tra ch
 ## 2. Tạo và cấu hình Meta app
 
 1. Tạo app phù hợp cho doanh nghiệp tại Meta for Developers.
-2. Thêm sản phẩm Messenger và kết nối Facebook Page cần thử nghiệm.
-3. Tạo Page access token cho Page đó.
-4. Trong phần Webhooks, thêm callback URL ở trên và đăng ký trường `messages`.
+2. Thêm Messenger và Facebook Login for Business.
+3. Trong phần Webhooks, thêm callback URL ở trên và đăng ký trường `messages`.
+4. Thêm `{PUBLIC_BASE_URL}/api/integrations/meta/callback` vào Valid OAuth Redirect URIs.
 5. Verify token do bạn tự đặt phải giống `META_VERIFY_TOKEN` trong `.env`.
 6. Với khách hàng ngoài vai trò test của app, hoàn thành các yêu cầu App Review/Advanced Access của Meta cho quyền liên quan, gồm `pages_messaging` và quyền quản lý webhook Page.
 
@@ -36,7 +36,9 @@ META_VERIFY_TOKEN=
 META_GRAPH_API_VERSION=v26.0
 ```
 
-`META_VERIFY_TOKEN` nên là chuỗi ngẫu nhiên dài. Không gửi `META_APP_SECRET` hoặc `META_PAGE_ACCESS_TOKEN` qua chat, ảnh chụp màn hình hay issue GitHub.
+`META_VERIFY_TOKEN` nên là chuỗi ngẫu nhiên dài. `TOKEN_ENCRYPTION_KEY` là khóa dùng để mã hóa Page token trong cơ sở dữ liệu. Không gửi các khóa hoặc access token qua chat, ảnh chụp màn hình hay issue GitHub.
+
+Luồng khuyến nghị là cấu hình `META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN` và `TOKEN_ENCRYPTION_KEY`, sau đó để chủ shop bấm **Kết nối Facebook Page** trong màn hình Integrations. `META_PAGE_ID`, `META_PAGE_ACCESS_TOKEN` và `META_SHOP_SLUG` chỉ còn là chế độ tương thích cho một Page cấu hình bằng biến môi trường.
 
 ## 4. Kiểm tra
 
@@ -61,7 +63,7 @@ và trả `confirmation_code` cùng URL theo dõi. Không dùng URL tunnel ngắ
 
 ## Giới hạn của pilot
 
-- Cấu hình hiện tại dành cho một Page gắn với `META_SHOP_SLUG`.
+- OAuth onboarding, token mã hóa và ánh xạ Page theo tenant đã hỗ trợ nhiều shop; mỗi Page chỉ thuộc một workspace tại một thời điểm.
 - Messenger chỉ cho phép gửi phản hồi theo chính sách và cửa sổ nhắn tin của Meta.
-- Khi bán cho nhiều shop, cần OAuth onboarding, lưu token đã mã hóa, phân quyền nhân viên, xử lý token hết hạn và hàng đợi webhook bền vững.
+- Bản thương mại vẫn cần làm mới/xử lý token hết hạn, rate limit, retry và hàng đợi webhook bền vững.
 - Quyền truy cập và quy trình xét duyệt có thể thay đổi; đối chiếu lại tài liệu Meta trước khi đưa lên production.
