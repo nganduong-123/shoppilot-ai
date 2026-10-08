@@ -175,3 +175,56 @@ def test_verified_owner_can_claim_environment_seeded_page(monkeypatch):
     )
     assert connection["shop_id"] == complete.json()["shop_id"]
     assert connection["config"]["source"] == "meta_oauth"
+
+
+def test_verified_owner_can_claim_legacy_environment_seeded_page(monkeypatch):
+    oauth_settings = replace(
+        settings,
+        meta_app_id="app-123",
+        meta_app_secret="app-secret",
+        meta_page_id="page-oauth-1",
+        meta_shop_slug="mint-fashion",
+        public_base_url="https://shop.example",
+        token_encryption_key="test-encryption-key",
+    )
+    monkeypatch.setattr(meta_oauth_module, "settings", oauth_settings)
+    monkeypatch.setattr(token_crypto_module, "settings", oauth_settings)
+    monkeypatch.setattr(
+        meta_oauth_module.httpx, "AsyncClient", lambda **_: FakeMetaClient()
+    )
+
+    seeded_shop = repository.get_shop("mint-fashion")
+    repository.upsert_channel_connection(
+        seeded_shop["id"], "messenger", "page-oauth-1", "Legacy Environment Page"
+    )
+    registration = {
+        "display_name": "Verified Legacy Page Owner",
+        "email": "verified-legacy-page-owner@example.com",
+        "password": "mat-khau-shoppilot-123",
+        "shop_name": "Verified Legacy Shop",
+        "shop_slug": "verified-legacy-shop",
+        "category": "Fashion",
+    }
+
+    with TestClient(app) as client:
+        assert client.post("/api/auth/register", json=registration).status_code == 201
+        start = client.get(
+            "/api/shops/verified-legacy-shop/integrations/meta/connect"
+        )
+        state = parse_qs(urlparse(start.json()["authorization_url"]).query)["state"][0]
+        assert client.get(
+            "/api/integrations/meta/callback",
+            params={"state": state, "code": "authorization-code"},
+            follow_redirects=False,
+        ).status_code == 303
+        complete = client.post(
+            "/api/shops/verified-legacy-shop/integrations/meta/complete",
+            json={"state": state, "page_id": "page-oauth-1"},
+        )
+
+    assert complete.status_code == 200
+    connection = repository.get_channel_connection_by_external(
+        "messenger", "page-oauth-1"
+    )
+    assert connection["shop_id"] == complete.json()["shop_id"]
+    assert connection["config"]["source"] == "meta_oauth"

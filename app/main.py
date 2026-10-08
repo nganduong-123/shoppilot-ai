@@ -486,9 +486,11 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         elif page_id == settings.meta_page_id:
             shop = require_shop(settings.meta_shop_slug)
             page_token = settings.meta_page_access_token
-            connection = repository.upsert_channel_connection(
-                shop["id"], "messenger", page_id, f"Facebook Page {page_id}"
-            )
+            if not connection:
+                connection = repository.upsert_channel_connection(
+                    shop["id"], "messenger", page_id, f"Facebook Page {page_id}",
+                    {"source": "environment"},
+                )
         if not shop or not connection or not page_token:
             continue
         adapter = MetaMessengerAdapter(page_id=page_id, page_access_token=page_token)

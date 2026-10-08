@@ -106,10 +106,21 @@ class MetaOAuthService:
         if not page:
             raise ValueError("Page không có trong danh sách đã cấp quyền.")
         existing = self.repo.get_channel_connection_by_external("messenger", page_id)
+        seeded_shop = self.repo.get_shop(settings.meta_shop_slug)
+        is_legacy_environment_connection = bool(
+            existing
+            and not existing["config"]
+            and page_id == settings.meta_page_id
+            and seeded_shop
+            and existing["shop_id"] == seeded_shop["id"]
+        )
         can_claim_environment_connection = bool(
             existing
             and existing["shop_id"] != shop_id
-            and existing["config"].get("source") == "environment"
+            and (
+                existing["config"].get("source") == "environment"
+                or is_legacy_environment_connection
+            )
         )
         if (
             existing
@@ -129,7 +140,11 @@ class MetaOAuthService:
             response.raise_for_status()
         if (
             can_claim_environment_connection
-            and not self.repo.delete_environment_channel_connection(existing["id"])
+            and not self.repo.delete_environment_channel_connection(
+                existing["id"],
+                legacy_shop_id=seeded_shop["id"] if seeded_shop else None,
+                legacy_page_id=settings.meta_page_id,
+            )
         ):
             raise RuntimeError("The environment Page link changed; please try again.")
         connection = self.repo.upsert_channel_connection(

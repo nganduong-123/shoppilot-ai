@@ -93,6 +93,49 @@ def test_meta_parser_ignores_echo_and_extracts_customer_message():
     assert events[0].text == "Còn size M không?"
 
 
+def test_environment_webhook_keeps_seed_marker(monkeypatch):
+    from dataclasses import replace
+
+    dynamic_settings = replace(
+        settings,
+        meta_app_secret="test-secret",
+        meta_page_id="page-123",
+        meta_page_access_token="page-token",
+        meta_shop_slug="mint-fashion",
+    )
+    monkeypatch.setattr(main_module, "settings", dynamic_settings)
+    monkeypatch.setattr(meta_module, "settings", dynamic_settings)
+    shop = repository.get_shop("mint-fashion")
+    repository.upsert_channel_connection(
+        shop["id"],
+        "messenger",
+        "page-123",
+        "Environment Page",
+        {"source": "environment"},
+    )
+    payload = {"object": "page", "entry": [{"id": "page-123", "messaging": []}]}
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    signature = "sha256=" + hmac.new(
+        b"test-secret", body, hashlib.sha256
+    ).hexdigest()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/webhooks/meta",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signature,
+            },
+        )
+
+    assert response.status_code == 200
+    connection = repository.get_channel_connection_by_external(
+        "messenger", "page-123"
+    )
+    assert connection["config"]["source"] == "environment"
+
+
 def test_oauth_connected_page_routes_webhook_to_its_own_shop(monkeypatch):
     from dataclasses import replace
 

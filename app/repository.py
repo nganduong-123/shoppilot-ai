@@ -540,17 +540,35 @@ class Repository:
             result["config"] = json_loads(result.pop("config_json"))
             return result
 
-    def delete_environment_channel_connection(self, connection_id: int) -> bool:
-        """Remove an env-seeded placeholder so a verified OAuth owner can claim it."""
+    def delete_environment_channel_connection(
+        self,
+        connection_id: int,
+        *,
+        legacy_shop_id: int | None = None,
+        legacy_page_id: str | None = None,
+    ) -> bool:
+        """Remove a current or legacy env-seeded Page placeholder."""
         with db_session() as connection:
             row = connection.execute(
-                "SELECT config_json FROM channel_connections WHERE id = ?",
+                """
+                SELECT shop_id, channel, external_account_id, config_json
+                FROM channel_connections WHERE id = ?
+                """,
                 (connection_id,),
             ).fetchone()
-            if (
-                not row
-                or json_loads(row["config_json"]).get("source") != "environment"
-            ):
+            if not row:
+                return False
+            config = json_loads(row["config_json"])
+            is_environment_seed = config.get("source") == "environment"
+            is_legacy_environment_seed = bool(
+                not config
+                and legacy_shop_id is not None
+                and legacy_page_id
+                and row["shop_id"] == legacy_shop_id
+                and row["channel"] == "messenger"
+                and row["external_account_id"] == legacy_page_id
+            )
+            if not (is_environment_seed or is_legacy_environment_seed):
                 return False
             return bool(
                 connection.execute(
