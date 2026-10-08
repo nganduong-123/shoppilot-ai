@@ -540,6 +540,25 @@ class Repository:
             result["config"] = json_loads(result.pop("config_json"))
             return result
 
+    def delete_environment_channel_connection(self, connection_id: int) -> bool:
+        """Remove an env-seeded placeholder so a verified OAuth owner can claim it."""
+        with db_session() as connection:
+            row = connection.execute(
+                "SELECT config_json FROM channel_connections WHERE id = ?",
+                (connection_id,),
+            ).fetchone()
+            if (
+                not row
+                or json_loads(row["config_json"]).get("source") != "environment"
+            ):
+                return False
+            return bool(
+                connection.execute(
+                    "DELETE FROM channel_connections WHERE id = ?",
+                    (connection_id,),
+                ).rowcount
+            )
+
     def list_channel_connections(
         self, shop_id: int, channel: str | None = None
     ) -> list[dict[str, Any]]:
