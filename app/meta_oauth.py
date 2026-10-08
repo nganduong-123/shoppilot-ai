@@ -106,13 +106,10 @@ class MetaOAuthService:
         if not page:
             raise ValueError("Page không có trong danh sách đã cấp quyền.")
         existing = self.repo.get_channel_connection_by_external("messenger", page_id)
-        seeded_shop = self.repo.get_shop(settings.meta_shop_slug)
         is_legacy_environment_connection = bool(
             existing
-            and not existing["config"]
             and page_id == settings.meta_page_id
-            and seeded_shop
-            and existing["shop_id"] == seeded_shop["id"]
+            and not existing["config"].get("page_access_token_enc")
         )
         can_claim_environment_connection = bool(
             existing
@@ -142,7 +139,6 @@ class MetaOAuthService:
             can_claim_environment_connection
             and not self.repo.delete_environment_channel_connection(
                 existing["id"],
-                legacy_shop_id=seeded_shop["id"] if seeded_shop else None,
                 legacy_page_id=settings.meta_page_id,
             )
         ):

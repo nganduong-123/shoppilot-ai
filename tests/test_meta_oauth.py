@@ -228,3 +228,24 @@ def test_verified_owner_can_claim_legacy_environment_seeded_page(monkeypatch):
     )
     assert connection["shop_id"] == complete.json()["shop_id"]
     assert connection["config"]["source"] == "meta_oauth"
+
+
+def test_oauth_managed_connection_is_not_deleted_as_legacy_seed():
+    shop = repository.get_shop("mint-fashion")
+    connection = repository.upsert_channel_connection(
+        shop["id"],
+        "messenger",
+        "protected-page",
+        "Protected OAuth Page",
+        {
+            "source": "meta_oauth",
+            "page_access_token_enc": "encrypted-token-placeholder",
+        },
+    )
+
+    deleted = repository.delete_environment_channel_connection(
+        connection["id"], legacy_page_id="protected-page"
+    )
+
+    assert deleted is False
+    assert repository.get_channel_connection(connection["id"]) is not None

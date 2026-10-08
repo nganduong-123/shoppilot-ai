@@ -544,7 +544,6 @@ class Repository:
         self,
         connection_id: int,
         *,
-        legacy_shop_id: int | None = None,
         legacy_page_id: str | None = None,
     ) -> bool:
         """Remove a current or legacy env-seeded Page placeholder."""
@@ -561,10 +560,8 @@ class Repository:
             config = json_loads(row["config_json"])
             is_environment_seed = config.get("source") == "environment"
             is_legacy_environment_seed = bool(
-                not config
-                and legacy_shop_id is not None
+                not config.get("page_access_token_enc")
                 and legacy_page_id
-                and row["shop_id"] == legacy_shop_id
                 and row["channel"] == "messenger"
                 and row["external_account_id"] == legacy_page_id
             )
