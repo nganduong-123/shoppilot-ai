@@ -9,8 +9,7 @@ import httpx
 
 from app.config import settings
 from app.repository import Repository, repository
-from app.tools import TOOL_SCHEMAS, ShopTools, confirm_pending_order, money, normalize_text
-
+from app.tools import TOOL_SCHEMAS, ShopTools, confirm_pending_order, normalize_text
 
 CONFIRM_PHRASES = {
     "xac nhan", "dong y", "chot don", "dat di", "ok dat", "yes", "confirm"
@@ -198,21 +197,22 @@ class SalesAgent:
 
         conversation = self.repo.get_conversation(conversation_id)
         last_product_ids = conversation.get("context", {}).get("last_product_ids", [])
-        if any(word in normalized for word in ["kiem tra ton", "con hang khong", "con khong"]):
-            if last_product_ids:
-                inventory = tools.execute(
-                    "check_inventory", {"product_id": last_product_ids[0]}
+        if last_product_ids and any(
+            word in normalized for word in ["kiem tra ton", "con hang khong", "con khong"]
+        ):
+            inventory = tools.execute(
+                "check_inventory", {"product_id": last_product_ids[0]}
+            )
+            if inventory.get("found"):
+                availability = (
+                    f"còn **{inventory['stock']}** sản phẩm"
+                    if inventory["in_stock"] else "đang tạm hết hàng"
                 )
-                if inventory.get("found"):
-                    availability = (
-                        f"còn **{inventory['stock']}** sản phẩm"
-                        if inventory["in_stock"] else "đang tạm hết hàng"
-                    )
-                    return self._finalize(
-                        conversation_id,
-                        f"**{inventory['name']}** hiện {availability}.",
-                        model="rule-fallback",
-                    )
+                return self._finalize(
+                    conversation_id,
+                    f"**{inventory['name']}** hiện {availability}.",
+                    model="rule-fallback",
+                )
 
         purchase_intent = any(
             phrase in normalized

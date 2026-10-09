@@ -93,6 +93,24 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=200)
 
 
+class AccountEmailRequest(BaseModel):
+    email: str = Field(pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$", max_length=254)
+
+
+class AccountTokenRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=300)
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=20, max_length=300)
+    password: str = Field(min_length=10, max_length=200)
+
+
+class EvaluationFeedback(BaseModel):
+    label: Literal["helpful", "incorrect", "unsafe"]
+    note: str | None = Field(default=None, max_length=1000)
+
+
 class MetaConnectionComplete(BaseModel):
     state: str = Field(min_length=20, max_length=300)
     page_id: str = Field(min_length=1, max_length=200)

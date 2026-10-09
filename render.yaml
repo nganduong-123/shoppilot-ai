@@ -9,7 +9,7 @@ services:
     name: shoppilot-ai
     runtime: docker
     plan: free
-    healthCheckPath: /api/health
+    healthCheckPath: /api/health/ready
     envVars:
       - key: APP_ENV
         value: production
@@ -23,6 +23,14 @@ services:
         value: "true"
       - key: REGISTRATION_ENABLED
         value: "true"
+      - key: EMAIL_VERIFICATION_REQUIRED
+        value: "false"
+      - key: EMAIL_PROVIDER
+        value: resend
+      - key: EMAIL_FROM
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
       - key: RATE_LIMIT_ENABLED
         value: "true"
       - key: AUTH_RATE_LIMIT_REQUESTS
@@ -33,6 +41,10 @@ services:
         value: "60"
       - key: CHAT_RATE_LIMIT_WINDOW_SECONDS
         value: "60"
+      - key: MAX_CSV_UPLOAD_BYTES
+        value: "2000000"
+      - key: MAX_CSV_ROWS
+        value: "10000"
       - key: TOKEN_ENCRYPTION_KEY
         generateValue: true
       - key: GROQ_API_KEY
@@ -57,3 +69,9 @@ services:
         generateValue: true
       - key: MAKE_MESSENGER_OUTBOUND_WEBHOOK_URL
         sync: false
+      - key: SHIPPING_QUOTE_URL
+        sync: false
+      - key: COMMERCE_ORDER_WEBHOOK_URL
+        sync: false
+      - key: INTEGRATION_WEBHOOK_SECRET
+        generateValue: true

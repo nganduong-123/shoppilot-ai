@@ -12,7 +12,6 @@ from app.config import settings
 from app.repository import Repository, repository
 from app.token_crypto import decrypt_secret, encrypt_secret
 
-
 META_SCOPES = "pages_show_list,pages_manage_metadata,pages_messaging"
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -157,6 +157,84 @@ class Repository:
                 "SELECT * FROM users WHERE email = ?", (email,)
             ).fetchone()
             return row_to_dict(row)
+
+    def get_user_by_id(self, user_id: str) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+            return row_to_dict(row)
+
+    def is_email_verified(self, user_id: str) -> bool:
+        with db_session() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM user_email_status WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            return bool(row)
+
+    def mark_email_verified(self, user_id: str) -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                INSERT INTO user_email_status (user_id, verified_at)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET verified_at = excluded.verified_at
+                """,
+                (user_id, utc_now()),
+            )
+
+    def create_account_token(
+        self, user_id: str, purpose: str, token_hash: str, expires_at: str
+    ) -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                DELETE FROM account_tokens
+                WHERE user_id = ? AND purpose = ? AND used_at IS NULL
+                """,
+                (user_id, purpose),
+            )
+            connection.execute(
+                """
+                INSERT INTO account_tokens
+                    (id, user_id, purpose, token_hash, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (str(uuid4()), user_id, purpose, token_hash, expires_at, utc_now()),
+            )
+
+    def consume_account_token(
+        self, token_hash: str, purpose: str, now: str
+    ) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT t.id, t.user_id, u.email, u.display_name
+                FROM account_tokens t
+                JOIN users u ON u.id = t.user_id
+                WHERE t.token_hash = ? AND t.purpose = ?
+                  AND t.used_at IS NULL AND t.expires_at > ?
+                """,
+                (token_hash, purpose, now),
+            ).fetchone()
+            if not row:
+                return None
+            updated = connection.execute(
+                """
+                UPDATE account_tokens SET used_at = ?
+                WHERE id = ? AND used_at IS NULL
+                """,
+                (now, row["id"]),
+            )
+            return dict(row) if updated.rowcount == 1 else None
+
+    def update_user_password(self, user_id: str, password_hash: str) -> None:
+        with db_session() as connection:
+            connection.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (password_hash, user_id),
+            )
+            connection.execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
 
     def create_auth_session(self, user_id: str, token_hash: str, expires_at: str) -> None:
         with db_session() as connection:
@@ -485,13 +563,50 @@ class Repository:
                 "SELECT COUNT(*) AS count FROM products WHERE shop_id = ? AND active = 1",
                 (shop_id,),
             ).fetchone()["count"]
+            feedback = connection.execute(
+                """
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN f.label = 'helpful' THEN 1 ELSE 0 END) AS helpful
+                FROM conversation_feedback f
+                JOIN conversations c ON c.id = f.conversation_id
+                WHERE c.shop_id = ?
+                """,
+                (shop_id,),
+            ).fetchone()
         data = dict(row)
         data["product_count"] = product_count
         conversations = data["conversations"] or 0
         data["automation_rate"] = round(
             100 * (conversations - data["handoffs"]) / conversations, 1
         ) if conversations else 100.0
+        data["feedback_total"] = feedback["total"] or 0
+        data["feedback_helpful"] = feedback["helpful"] or 0
+        data["feedback_helpful_rate"] = round(
+            100 * data["feedback_helpful"] / data["feedback_total"], 1
+        ) if data["feedback_total"] else None
         return data
+
+    def add_conversation_feedback(
+        self,
+        conversation_id: str,
+        label: str,
+        note: str | None,
+        evaluator_id: str | None,
+    ) -> dict[str, Any]:
+        with db_session() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO conversation_feedback
+                    (conversation_id, label, note, evaluator_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (conversation_id, label, note, evaluator_id, utc_now()),
+            )
+            row = connection.execute(
+                "SELECT * FROM conversation_feedback WHERE id = ?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            return dict(row)
 
     def upsert_channel_connection(
         self,
@@ -995,7 +1110,7 @@ class Repository:
         """Delete channel data for one platform user and keep an anonymous audit receipt."""
         now = utc_now()
         external_user_hash = hashlib.sha256(
-            f"{channel}:{external_customer_id}".encode("utf-8")
+            f"{channel}:{external_customer_id}".encode()
         ).hexdigest()
         deleted_records = 0
 
@@ -1104,6 +1219,120 @@ class Repository:
                 (confirmation_code,),
             ).fetchone()
             return row_to_dict(row)
+
+    def enqueue_job(
+        self,
+        kind: str,
+        payload: dict[str, Any],
+        *,
+        dedupe_key: str | None = None,
+        max_attempts: int = 5,
+        connection: Any | None = None,
+    ) -> bool:
+        now = utc_now()
+        values = (
+            str(uuid4()), kind, dedupe_key, json_dumps(payload),
+            max_attempts, now, now, now,
+        )
+
+        def insert(target: Any) -> bool:
+            cursor = target.execute(
+                """
+                INSERT INTO jobs
+                    (id, kind, dedupe_key, payload_json, status, attempts,
+                     max_attempts, available_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?)
+                ON CONFLICT(dedupe_key) DO NOTHING
+                """,
+                values,
+            )
+            return cursor.rowcount == 1
+
+        if connection is not None:
+            return insert(connection)
+        with db_session() as managed_connection:
+            return insert(managed_connection)
+
+    def requeue_stale_jobs(self, stale_before: str) -> int:
+        with db_session() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE jobs SET status = 'queued', locked_at = NULL,
+                    available_at = ?, updated_at = ?
+                WHERE status = 'running' AND locked_at < ?
+                """,
+                (utc_now(), utc_now(), stale_before),
+            )
+            return cursor.rowcount
+
+    def claim_job(self) -> dict[str, Any] | None:
+        now = utc_now()
+        with db_session() as connection:
+            candidates = connection.execute(
+                """
+                SELECT id FROM jobs
+                WHERE status = 'queued' AND available_at <= ?
+                ORDER BY created_at LIMIT 5
+                """,
+                (now,),
+            ).fetchall()
+            for candidate in candidates:
+                cursor = connection.execute(
+                    """
+                    UPDATE jobs SET status = 'running', attempts = attempts + 1,
+                        locked_at = ?, updated_at = ?
+                    WHERE id = ? AND status = 'queued'
+                    """,
+                    (now, now, candidate["id"]),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                row = connection.execute(
+                    "SELECT * FROM jobs WHERE id = ?", (candidate["id"],)
+                ).fetchone()
+                result = dict(row)
+                result["payload"] = json_loads(result.pop("payload_json"))
+                return result
+        return None
+
+    def complete_job(self, job_id: str) -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                UPDATE jobs SET status = 'completed', locked_at = NULL,
+                    last_error = NULL, updated_at = ? WHERE id = ?
+                """,
+                (utc_now(), job_id),
+            )
+
+    def fail_job(self, job_id: str, error: str, attempts: int, max_attempts: int) -> None:
+        terminal = attempts >= max_attempts
+        delay_seconds = min(300, 2 ** max(1, attempts))
+        available_at = (datetime.now(UTC) + timedelta(seconds=delay_seconds)).isoformat()
+        with db_session() as connection:
+            connection.execute(
+                """
+                UPDATE jobs SET status = ?, locked_at = NULL, last_error = ?,
+                    available_at = ?, updated_at = ? WHERE id = ?
+                """,
+                (
+                    "failed" if terminal else "queued",
+                    error[:1000], available_at, utc_now(), job_id,
+                ),
+            )
+
+    def job_stats(self) -> dict[str, int]:
+        counts = {"queued": 0, "running": 0, "failed": 0}
+        with db_session() as connection:
+            rows = connection.execute(
+                """
+                SELECT status, COUNT(*) AS total FROM jobs
+                WHERE status IN ('queued', 'running', 'failed') GROUP BY status
+                """
+            ).fetchall()
+            for row in rows:
+                counts[row["status"]] = row["total"]
+        return counts
 
 
 repository = Repository()

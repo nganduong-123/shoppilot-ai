@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from app.config import settings
 
@@ -18,6 +18,11 @@ except ImportError:  # pragma: no cover - installed in production
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS shops (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     slug TEXT NOT NULL UNIQUE,
@@ -216,6 +221,54 @@ CREATE TABLE IF NOT EXISTS meta_oauth_states (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS user_email_status (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    verified_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS account_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+    scope TEXT NOT NULL,
+    identity_hash TEXT NOT NULL,
+    window_start INTEGER NOT NULL,
+    request_count INTEGER NOT NULL DEFAULT 0,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY(scope, identity_hash, window_start)
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    dedupe_key TEXT UNIQUE,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 5,
+    available_at TEXT NOT NULL,
+    locked_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversation_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    note TEXT,
+    evaluator_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_conversation ON tool_calls(conversation_id);
@@ -230,8 +283,16 @@ CREATE INDEX IF NOT EXISTS idx_data_deletion_status
     ON data_deletion_requests(status, requested_at);
 CREATE INDEX IF NOT EXISTS idx_shop_members_user ON shop_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth_sessions(token_hash, expires_at);
+CREATE INDEX IF NOT EXISTS idx_account_tokens_lookup
+    ON account_tokens(token_hash, purpose, expires_at);
 CREATE INDEX IF NOT EXISTS idx_meta_oauth_states_user
     ON meta_oauth_states(user_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_expiry
+    ON rate_limit_buckets(expires_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_ready
+    ON jobs(status, available_at);
+CREATE INDEX IF NOT EXISTS idx_feedback_conversation
+    ON conversation_feedback(conversation_id, created_at);
 """
 
 # Keep JSON and timestamps as text so repository queries remain portable.
@@ -249,6 +310,7 @@ SERIAL_TABLES = {
     "channel_messages",
     "channel_events",
     "copilot_suggestions",
+    "conversation_feedback",
 }
 
 
@@ -377,6 +439,25 @@ def db_session(path: Path | None = None) -> Iterator[sqlite3.Connection | Postgr
 def init_database(path: Path | None = None) -> None:
     with db_session(path) as connection:
         connection.executescript(POSTGRES_SCHEMA if using_postgres(path) else SCHEMA)
+        migration = "001_email_verification_backfill"
+        applied = connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = ?", (migration,)
+        ).fetchone()
+        if not applied:
+            # Accounts created before verification support remain valid after migration.
+            connection.execute(
+                """
+                INSERT INTO user_email_status (user_id, verified_at)
+                SELECT u.id, u.created_at FROM users u
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM user_email_status s WHERE s.user_id = u.id
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+                (migration, utc_now()),
+            )
 
 
 def row_to_dict(row: Mapping[str, Any] | sqlite3.Row | None) -> dict[str, Any] | None:

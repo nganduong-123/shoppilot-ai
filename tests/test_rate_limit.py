@@ -7,27 +7,25 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 from app.config import settings
 from app.main import app
-from app.rate_limit import InMemoryRateLimiter
+from app.rate_limit import PersistentRateLimiter
 
 
 def test_sliding_window_allows_requests_again_after_expiry():
-    limiter = InMemoryRateLimiter()
+    limiter = PersistentRateLimiter()
 
-    assert limiter.check("auth", "client-a", 2, 10, now=100) is None
     assert limiter.check("auth", "client-a", 2, 10, now=101) is None
-    assert limiter.check("auth", "client-a", 2, 10, now=102) == 8
-    assert limiter.check("auth", "client-b", 2, 10, now=102) is None
+    assert limiter.check("auth", "client-a", 2, 10, now=102) is None
+    assert limiter.check("auth", "client-a", 2, 10, now=103) == 7
+    assert limiter.check("auth", "client-b", 2, 10, now=103) is None
     assert limiter.check("auth", "client-a", 2, 10, now=111) is None
 
 
-def test_limiter_bounds_the_number_of_tracked_identities():
-    limiter = InMemoryRateLimiter(max_identities=2)
+def test_limiter_state_is_shared_between_instances():
+    first = PersistentRateLimiter()
+    second = PersistentRateLimiter()
 
-    assert limiter.check("auth", "client-a", 1, 60, now=100) is None
-    assert limiter.check("auth", "client-b", 1, 60, now=100) is None
-    assert limiter.check("auth", "client-c", 1, 60, now=100) is None
-    # client-a was the oldest bucket and can start a new window after eviction.
-    assert limiter.check("auth", "client-a", 1, 60, now=101) is None
+    assert first.check("auth", "client-a", 1, 60, now=100) is None
+    assert second.check("auth", "client-a", 1, 60, now=101) == 19
 
 
 def test_login_rate_limit_returns_retry_after(monkeypatch):

@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+
+import app.tools as tools_module
 from app.repository import repository
 from app.tools import ShopTools, confirm_pending_order
 
@@ -41,3 +44,29 @@ def test_cannot_create_order_above_stock():
     assert result["created"] is False
     assert result["available"] == product["stock"]
     assert repository.get_conversation("stock-guard")["pending_action"] is None
+
+
+def test_confirmed_order_and_commerce_delivery_are_persisted_atomically(monkeypatch):
+    monkeypatch.setattr(
+        tools_module,
+        "settings",
+        SimpleNamespace(
+            shipping_quote_url=None,
+            commerce_order_webhook_url="https://commerce.example/orders",
+        ),
+    )
+    shop = repository.get_shop("mint-fashion")
+    repository.create_conversation("outbox-order", shop["id"])
+    tools = ShopTools(shop, "outbox-order")
+    product = repository.list_products(shop["id"])[0]
+    tools.execute(
+        "prepare_draft_order",
+        {"product_id": product["id"], "quantity": 1, "location": "Quận 1"},
+    )
+
+    confirmed = confirm_pending_order("outbox-order")
+    delivery = repository.claim_job()
+
+    assert confirmed["confirmed"] is True
+    assert delivery["kind"] == "commerce_order"
+    assert delivery["payload"]["draft_order_id"] == confirmed["draft_order_id"]

@@ -1,6 +1,6 @@
 # ShopPilot AI
 
-**Auditable multi-tenant sales and support agent for online shops.**
+**Production-ready, auditable multi-tenant sales and support platform for online shops.**
 
 **Live demo:** https://shoppilot-ai-bt8u.onrender.com/<br>
 The deployed demo uses PostgreSQL, secure shop accounts and the Groq-hosted
@@ -25,7 +25,12 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Human reply copilot:** summarizes the thread and drafts a grounded reply for staff review; it never sends a customer message automatically.
 - **Meta review readiness:** public privacy/terms pages plus a signed user-data deletion callback and status receipt.
 - **Secure shop accounts:** scrypt password hashing, HttpOnly sessions and owner/manager/agent tenant boundaries.
-- **Abuse protection:** configurable sliding-window limits protect authentication and public chat endpoints.
+- **Account lifecycle:** optional email verification and one-time password reset links through Resend.
+- **Shared abuse protection:** PostgreSQL-backed limits protect authentication and public chat across instances.
+- **Durable delivery:** webhook jobs survive restarts, retry with backoff and expose a dead-letter state.
+- **Production observability:** JSON request logs, request IDs, liveness/readiness probes and Prometheus metrics.
+- **Human evaluation:** reviewers label conversations as helpful, incorrect or unsafe; metrics aggregate the results.
+- **Commerce connectors:** signed webhooks connect shipping quotes and confirmed orders to real providers.
 - **Meta OAuth onboarding:** owners authorize on Meta, select a Page and store only an encrypted Page token; ShopPilot never receives a Facebook password.
 - **Optional Make bridge:** connects a pilot Messenger Page while direct Meta App access is pending.
 - **Embeddable web widget:** add a sales assistant to an existing store with one script tag.
@@ -72,6 +77,8 @@ Detailed design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Groq OpenAI-compatible Chat Completions API
 - SQLite locally; PostgreSQL persistence on the Render deployment
 - Scrypt authentication, role-based tenant access and encrypted Meta tokens
+- Resend account verification/password recovery and single-use hashed tokens
+- PostgreSQL durable jobs, shared rate limits and human feedback labels
 - Responsive HTML/CSS/JavaScript console
 - Pytest, scenario evaluation and GitHub Actions
 - Docker and Docker Compose
@@ -90,6 +97,11 @@ Open:
 - OpenAPI: <http://127.0.0.1:8000/docs>
 
 The application still works in deterministic fallback mode if `GROQ_API_KEY` is absent.
+
+For production account recovery, set `EMAIL_PROVIDER=resend`, `EMAIL_FROM`,
+`RESEND_API_KEY` and then enable `EMAIL_VERIFICATION_REQUIRED=true`. Shipping and
+order systems connect through the signed `SHIPPING_QUOTE_URL` and
+`COMMERCE_ORDER_WEBHOOK_URL` bridges documented in the production runbook.
 
 For durable server data, set `DATABASE_URL` to a PostgreSQL connection string. It
 takes precedence over `DATABASE_PATH`; local development and tests continue to use
@@ -117,6 +129,9 @@ docker compose up --build
 ## Test and evaluate
 
 ```powershell
+.\.venv313\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv313\Scripts\ruff.exe check app tests scripts
+.\.venv313\Scripts\python.exe -m compileall -q app scripts
 .\.venv313\Scripts\python.exe -m pytest -q
 .\.venv313\Scripts\python.exe scripts\evaluate.py
 .\.venv313\Scripts\python.exe scripts\evaluate.py --online
@@ -125,7 +140,7 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **42 automated tests passed**
+- **56 automated tests passed**
 - **10/10 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution workflow and integration readiness.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
@@ -154,6 +169,7 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 | `POST` | `/api/shops/{slug}/inbox/conversations/{id}/assist` | Draft a grounded reply for human review without sending it |
 | `GET` | `/api/integrations/meta/status` | Read review URLs and configuration readiness without exposing secrets |
 | `POST` | `/api/auth/register`, `/api/auth/login`, `/api/auth/logout` | Manage ShopPilot accounts and HttpOnly sessions |
+| `POST` | `/api/auth/verify-email/*`, `/api/auth/password-reset/*` | Verify account email and reset a forgotten password |
 | `GET` | `/api/shops/{slug}/integrations/meta/connect` | Start Meta OAuth without collecting a Facebook password |
 | `GET` | `/api/integrations/meta/callback` | Exchange Meta authorization and load manageable Pages |
 | `POST` | `/api/shops/{slug}/integrations/meta/complete` | Encrypt the selected Page token and subscribe its webhook |
@@ -162,6 +178,8 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 | `POST` | `/api/shops/{slug}/products/import` | Import catalog CSV |
 | `GET` | `/api/conversations/{id}/trace` | Inspect messages, tools and actions |
 | `GET` | `/api/shops/{slug}/metrics` | Read operational demo metrics |
+| `POST` | `/api/conversations/{id}/feedback` | Store a human quality/safety label |
+| `GET` | `/api/health/live`, `/api/health/ready`, `/metrics` | Operability and Prometheus endpoints |
 
 ## Repository map
 
@@ -174,6 +192,10 @@ app/
 ├── tools.py          # Business tools and confirmation workflow
 ├── repository.py     # Tenant-scoped data access
 ├── database.py       # SQLite/PostgreSQL schema and transactions
+├── jobs.py           # Durable webhook/order worker with retry
+├── integrations.py   # Signed shipping and commerce bridges
+├── email_service.py  # Verification and password recovery delivery
+├── observability.py  # Request IDs, security headers, logs and metrics
 ├── main.py           # FastAPI endpoints
 └── static/           # Chat, catalog and observability UI
 evals/                # Scenario-based agent evaluation
@@ -190,9 +212,11 @@ docs/                 # Architecture and interview learning material
 - Prompt injection attempts cannot change prices or expose another tenant.
 - The agent escalates complaints and exceptions instead of inventing an answer.
 
-## Current limitations
+## External activation boundaries
 
-This repository is a portfolio MVP. Catalog, shipping rules and order fulfillment are simulated. Account sessions, tenant roles, PostgreSQL, encrypted Meta OAuth onboarding and single-instance rate limiting are implemented. A production version would additionally add email verification/password recovery, a shared rate-limit store, a durable job queue, real commerce/transport adapters, online evaluation with human labels, production monitoring and Meta Advanced Access approval for public users outside the app's roles.
+The application code and deployment path are complete for a production release. A new installation must still supply credentials for the services it chooses to use: Groq, Resend, Meta and optional shipping/commerce webhooks. Meta Advanced Access is an external review performed by Meta, not a code change. Until a provider URL is configured, the included catalog and shipping rules remain a safe deterministic fallback rather than pretending an external order was fulfilled.
+
+See [docs/PRODUCTION_RUNBOOK.md](docs/PRODUCTION_RUNBOOK.md) for release, monitoring, recovery and connector activation steps.
 
 ## Embed the website widget
 
@@ -216,6 +240,7 @@ Public review pages are available at `/privacy`, `/terms` and `/data-deletion`.
 
 - [Learning guide](docs/LEARNING_GUIDE.md): concepts and suggested code-reading order.
 - [Interview guide](docs/INTERVIEW_GUIDE.md): 90-second pitch, technical questions and honest limitations.
+- [Production runbook](docs/PRODUCTION_RUNBOOK.md): required configuration, release checks and incident recovery.
 
 ## License
 

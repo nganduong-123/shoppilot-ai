@@ -65,5 +65,5 @@ và trả `confirmation_code` cùng URL theo dõi. Không dùng URL tunnel ngắ
 
 - OAuth onboarding, token mã hóa và ánh xạ Page theo tenant đã hỗ trợ nhiều shop; mỗi Page chỉ thuộc một workspace tại một thời điểm.
 - Messenger chỉ cho phép gửi phản hồi theo chính sách và cửa sổ nhắn tin của Meta.
-- Bản thương mại vẫn cần làm mới/xử lý token hết hạn, rate limit, retry và hàng đợi webhook bền vững.
+- Webhook đã có shared rate limit, durable queue, retry/backoff và dead-letter state. Khi Page token hết hạn hoặc bị thu hồi, owner kết nối lại Page qua OAuth; job lỗi được giữ để điều tra thay vì mất sự kiện.
 - Quyền truy cập và quy trình xét duyệt có thể thay đổi; đối chiếu lại tài liệu Meta trước khi đưa lên production.

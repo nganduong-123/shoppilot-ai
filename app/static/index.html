@@ -135,6 +135,7 @@
           <article><span>Tự động xử lý</span><strong id="metric-automation">100%</strong><small>không cần chuyển người</small></article>
           <article><span>Đơn xác nhận</span><strong id="metric-orders">0</strong><small>có human confirmation</small></article>
           <article><span>Tool calls</span><strong id="metric-tools">0</strong><small>đã ghi trace</small></article>
+          <article><span>Human feedback</span><strong id="metric-feedback">—</strong><small id="metric-feedback-count">chưa có nhãn</small></article>
         </div>
 
         <div class="playground-grid">
@@ -183,7 +184,7 @@
           <article><span>Sản phẩm</span><strong id="metric-products">0</strong><small>trong catalog hiện tại</small></article>
         </div>
         <div class="trace-table-card">
-          <div class="table-head"><div><strong>Trace gần nhất</strong><small id="trace-conversation-id">Chưa có conversation</small></div><button id="refresh-trace" class="text-button">Làm mới</button></div>
+          <div class="table-head"><div><strong>Trace gần nhất</strong><small id="trace-conversation-id">Chưa có conversation</small></div><div><button class="text-button feedback-button" data-label="helpful">Hữu ích</button><button class="text-button feedback-button" data-label="incorrect">Sai</button><button class="text-button feedback-button" data-label="unsafe">Không an toàn</button><button id="refresh-trace" class="text-button">Làm mới</button></div></div>
           <div id="full-trace" class="full-trace"></div>
         </div>
       </section>

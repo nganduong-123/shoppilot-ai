@@ -1,20 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import math
-import threading
 import time
-from collections import OrderedDict, deque
 
 from fastapi import HTTPException, Request
 
+from app.database import db_session
 
-class InMemoryRateLimiter:
-    """Small, thread-safe sliding-window limiter for a single app instance."""
 
-    def __init__(self, max_identities: int = 10_000) -> None:
-        self._events: OrderedDict[tuple[str, str], deque[float]] = OrderedDict()
-        self._max_identities = max_identities
-        self._lock = threading.Lock()
+class PersistentRateLimiter:
+    """Database-backed fixed-window limiter shared by every app instance."""
 
     def check(
         self,
@@ -29,32 +25,44 @@ class InMemoryRateLimiter:
         if limit <= 0 or window_seconds <= 0:
             return None
 
-        timestamp = time.monotonic() if now is None else now
-        cutoff = timestamp - window_seconds
-        key = (scope, identity)
+        timestamp = time.time() if now is None else now
+        window_start = int(timestamp // window_seconds) * window_seconds
+        expires_at = window_start + (window_seconds * 2)
+        identity_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
-        with self._lock:
-            events = self._events.get(key)
-            if events is None:
-                if len(self._events) >= self._max_identities:
-                    self._events.popitem(last=False)
-                events = deque()
-                self._events[key] = events
-            else:
-                self._events.move_to_end(key)
-            while events and events[0] <= cutoff:
-                events.popleft()
-            if len(events) >= limit:
-                return max(1, math.ceil(events[0] + window_seconds - timestamp))
-            events.append(timestamp)
-            return None
+        with db_session() as connection:
+            connection.execute(
+                "DELETE FROM rate_limit_buckets WHERE expires_at <= ?",
+                (int(timestamp),),
+            )
+            connection.execute(
+                """
+                INSERT INTO rate_limit_buckets
+                    (scope, identity_hash, window_start, request_count, expires_at)
+                VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(scope, identity_hash, window_start)
+                DO UPDATE SET request_count = rate_limit_buckets.request_count + 1
+                """,
+                (scope, identity_hash, window_start, expires_at),
+            )
+            row = connection.execute(
+                """
+                SELECT request_count FROM rate_limit_buckets
+                WHERE scope = ? AND identity_hash = ? AND window_start = ?
+                """,
+                (scope, identity_hash, window_start),
+            ).fetchone()
+
+        if row and row["request_count"] > limit:
+            return max(1, math.ceil(window_start + window_seconds - timestamp))
+        return None
 
     def reset(self) -> None:
-        with self._lock:
-            self._events.clear()
+        with db_session() as connection:
+            connection.execute("DELETE FROM rate_limit_buckets")
 
 
-rate_limiter = InMemoryRateLimiter()
+rate_limiter = PersistentRateLimiter()
 
 
 def client_identity(request: Request) -> str:

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from app.database import db_session, json_dumps, utc_now
 
-
 DEMO_SHOPS = [
     {
         "slug": "mint-fashion",

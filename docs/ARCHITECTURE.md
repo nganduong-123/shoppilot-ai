@@ -32,7 +32,7 @@ flowchart LR
 | `repository.py` | Đọc/ghi dữ liệu, luôn giới hạn theo `shop_id` |
 | `database.py` | Schema và transaction dùng SQLite local hoặc PostgreSQL trên server |
 | `auth.py` | Băm mật khẩu scrypt, tạo phiên đăng nhập HttpOnly và xác thực request |
-| `rate_limit.py` | Giới hạn tần suất đăng nhập và chat công khai theo cửa sổ trượt |
+| `rate_limit.py` | Giới hạn tần suất đăng nhập và chat công khai bằng quota dùng chung trong database |
 | `meta_oauth.py` | OAuth state, trao đổi authorization code, chọn Page và đăng ký webhook |
 | `main.py` | HTTP API, validation và phục vụ giao diện |
 | `channels/` | Chuẩn hóa webhook từng nền tảng và gửi phản hồi |
@@ -49,7 +49,7 @@ flowchart LR
 5. Khi nhân viên tắt AI, tin mới vẫn được lưu nhưng không tự trả lời; toàn bộ ngữ cảnh được giữ để nhân viên tiếp quản.
 6. Repository tính trạng thái cần chú ý từ handoff, hướng tin nhắn cuối, tín hiệu mua hàng và thời gian chờ. Ca chờ quá năm phút được đánh dấu vi phạm SLA.
 7. Nhân viên có thể nhận xử lý, trả lời, hoàn tất hoặc mở lại hội thoại. Tin nhắn mới tự mở lại hội thoại đã hoàn tất.
-8. Website trả lời trực tiếp qua HTTP. Messenger được tiếp nhận nhanh và xử lý trong background task.
+8. Website trả lời trực tiếp qua HTTP. Messenger được ghi vào bảng `jobs` trước khi webhook trả `200`, sau đó worker xử lý có retry nên không mất sự kiện khi tiến trình restart.
 
 Priority là quy tắc minh bạch trong Python, không phải điểm số bí mật từ LLM. Vì vậy đội vận hành có thể giải thích tại sao một khách được đưa lên đầu hàng chờ và thay đổi ngưỡng SLA theo nhu cầu.
 
@@ -59,7 +59,7 @@ Copilot đọc tối đa 16 tin nhắn gần nhất cùng catalog và chính sá
 
 Nhân viên phải bấm **Chèn vào ô trả lời**, có thể sửa nội dung rồi mới bấm **Gửi**. Mỗi bản nháp được lưu với trạng thái `generated` hoặc `used` để sau này đo tỷ lệ chấp nhận. Cơ chế này giữ con người ở điểm quyết định cuối cùng và tránh để AI tự gửi lời hứa về giá, phí giao hoặc hoàn tiền.
 
-Background task trong tiến trình phù hợp cho bản demo. Bản production cần hàng đợi bền vững như Redis/Celery để không mất sự kiện khi máy chủ khởi động lại.
+Worker claim job bằng cập nhật có điều kiện, retry theo exponential backoff và chuyển sang trạng thái `failed` khi hết số lần thử. Payload và trạng thái nằm trong PostgreSQL; nhiều instance không xử lý cùng một job. Queue depth xuất hiện trong health và Prometheus metrics.
 
 ## Tài khoản và phân quyền
 
@@ -69,11 +69,13 @@ Background task trong tiến trình phù hợp cho bản demo. Bản production 
 4. Khi `AUTH_REQUIRED=true`, inbox, metrics, catalog write và trace đều kiểm tra membership của đúng shop.
 5. Khách mua hàng vẫn dùng widget hoặc Messenger mà không cần tài khoản ShopPilot.
 
+Email xác minh và đặt lại mật khẩu dùng token ngẫu nhiên một lần; database chỉ lưu SHA-256 của token. Token có hạn dùng, bị đánh dấu đã sử dụng atomically và mọi phiên đăng nhập cũ bị thu hồi sau khi đổi mật khẩu. Email tồn tại hay không không được lộ qua endpoint yêu cầu reset.
+
 ## Chống lạm dụng
 
-Các route đăng ký/đăng nhập dùng chung một quota theo địa chỉ client; API chat và widget dùng quota riêng. Khi vượt ngưỡng, API trả `429 Too Many Requests` cùng header `Retry-After`, nên giao diện hoặc client biết thời điểm thử lại mà không cần đoán.
+Các route đăng ký/đăng nhập dùng chung một quota theo địa chỉ client; API chat và widget dùng quota riêng. Bộ đếm cửa sổ thời gian nằm trong PostgreSQL nên nhiều web instance vẫn áp dụng cùng một quota. Khi vượt ngưỡng, API trả `429 Too Many Requests` cùng header `Retry-After`, giúp client biết thời điểm thử lại.
 
-Giới hạn có thể cấu hình bằng `AUTH_RATE_LIMIT_*` và `CHAT_RATE_LIMIT_*`. Bản portfolio chạy một web instance nên dùng bộ nhớ trong tiến trình. Khi mở rộng nhiều instance, cần chuyển các cửa sổ đếm sang kho dùng chung như Redis để mọi instance áp dụng cùng một quota.
+Giới hạn có thể cấu hình bằng `AUTH_RATE_LIMIT_*` và `CHAT_RATE_LIMIT_*`. Identity được băm SHA-256 trước khi lưu; các bucket hết hạn được dọn trong lúc xử lý request.
 
 ## Meta OAuth onboarding
 
@@ -126,3 +128,9 @@ Mỗi tool call lưu:
 - Trạng thái thành công/thất bại.
 
 `scripts/evaluate.py` chạy bộ scenario độc lập với unit test. Unit test xác nhận code hoạt động; evaluation xác nhận agent chọn đúng tool, đúng tenant, đúng sản phẩm và đúng trạng thái nghiệp vụ.
+
+Middleware gắn `X-Request-ID`, ghi log JSON theo route template và xuất counter/latency tại `/metrics`. `/api/health/live` chỉ xác nhận tiến trình sống; `/api/health/ready` kiểm tra cả database và queue. Nhân viên có thể gắn nhãn `helpful`, `incorrect` hoặc `unsafe` cho hội thoại; dashboard tổng hợp tỷ lệ hữu ích từ chính nhãn người duyệt.
+
+## Tích hợp thương mại
+
+`SHIPPING_QUOTE_URL` nhận yêu cầu tính phí theo shop, địa điểm, giá trị đơn và tiền tệ. `COMMERCE_ORDER_WEBHOOK_URL` nhận đơn đã qua bước xác nhận rõ ràng của khách. Cả hai payload dùng JSON canonical và chữ ký HMAC-SHA256 trong `X-ShopPilot-Signature`. Đơn đã xác nhận đi qua durable queue nên lỗi provider không làm mất sự kiện.

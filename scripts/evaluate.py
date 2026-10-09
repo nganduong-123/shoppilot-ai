@@ -9,16 +9,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import app.agent as agent_module  # noqa: E402
-import app.database as database_module  # noqa: E402
-from app.agent import sales_agent  # noqa: E402
-from app.database import init_database  # noqa: E402
-from app.repository import repository  # noqa: E402
-from app.seed import seed_demo_data  # noqa: E402
+import app.agent as agent_module
+import app.database as database_module
+from app.agent import sales_agent
+from app.database import init_database
+from app.repository import repository
+from app.seed import seed_demo_data
 
 
 async def evaluate(online: bool = False) -> dict:

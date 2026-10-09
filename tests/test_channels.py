@@ -12,8 +12,8 @@ from fastapi.testclient import TestClient
 import app.channels.meta as meta_module
 import app.main as main_module
 import app.token_crypto as token_crypto_module
-from app.config import settings
 from app.channels.meta import MetaMessengerAdapter
+from app.config import settings
 from app.main import app
 from app.repository import repository
 from app.token_crypto import encrypt_secret

@@ -6,7 +6,7 @@
 
 Với hành động làm thay đổi dữ liệu, em không cho LLM tự xác nhận. Agent chỉ tạo draft; workflow Python yêu cầu khách xác nhận ở lượt sau, kiểm tra lại tồn kho rồi mới trừ hàng. Trường hợp khiếu nại hoặc thiếu căn cứ được chuyển nhân viên cùng toàn bộ ngữ cảnh.
 
-Hệ thống dùng FastAPI, PostgreSQL/SQLite, Groq và giao diện web responsive. Unified inbox nhận diện tín hiệu mua, đưa ca cần người lên đầu và cảnh báo SLA năm phút. Khi nhân viên tiếp quản, Copilot tóm tắt và soạn sẵn câu trả lời nhưng không tự gửi. Chủ shop kết nối Page bằng Meta OAuth nên không chia sẻ mật khẩu; Page token được mã hóa và ánh xạ theo tenant. Em thêm audit trace, 37 automated tests, 10 browser E2E checks và 16 evaluation scenarios để đo tool routing, tenant isolation và safety workflow.”
+Hệ thống dùng FastAPI, PostgreSQL/SQLite, Groq và giao diện web responsive. Unified inbox nhận diện tín hiệu mua, đưa ca cần người lên đầu và cảnh báo SLA năm phút. Khi nhân viên tiếp quản, Copilot tóm tắt và soạn sẵn câu trả lời nhưng không tự gửi. Chủ shop kết nối Page bằng Meta OAuth nên không chia sẻ mật khẩu; Page token được mã hóa và ánh xạ theo tenant. Em thêm durable queue, account recovery, shared rate limit, production metrics, human feedback, 53 automated tests, 10 browser E2E checks và 16 evaluation scenarios để đo tool routing, tenant isolation và safety workflow.”
 
 ## Câu hỏi thường gặp
 
@@ -36,11 +36,11 @@ Chatbot gửi câu trả lời thẳng cho khách. Copilot chỉ tạo tóm tắ
 
 ### 100% evaluation có nghĩa hệ thống hoàn hảo không?
 
-Không. Kết quả chỉ đúng trên 16 scenario đã định nghĩa ở chế độ offline. Cần mở rộng dữ liệu, chạy online eval, human review và theo dõi production trước khi dùng thật.
+Không. Kết quả 16/16 chỉ đúng trên tập scenario đã định nghĩa. Hệ thống có online eval, human feedback và production metrics để tiếp tục đo trên dữ liệu vận hành; không suy rộng baseline thành độ chính xác tuyệt đối.
 
 ### Hạn chế hiện tại là gì?
 
-Catalog và shipping đang là dữ liệu mô phỏng; chưa kết nối Sapo, Haravan, KiotViet hay đơn vị vận chuyển. Ứng dụng đã hỗ trợ PostgreSQL cho dữ liệu bền vững trên server; production vẫn cần authentication, RBAC và mã hóa thông tin khách hàng.
+Các connector shipping và commerce dùng webhook ký HMAC nên có thể nối GHN, Haravan, Sapo hoặc middleware riêng, nhưng deployment chỉ gọi provider nào đã được chủ hệ thống cấp URL/credential. Meta Advanced Access vẫn phụ thuộc quy trình xét duyệt bên ngoài của Meta.
 
 ## Dòng CV đề xuất
 

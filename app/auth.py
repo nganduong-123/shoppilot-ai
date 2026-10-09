@@ -11,10 +11,13 @@ from fastapi import HTTPException, Request, Response
 from app.config import settings
 from app.repository import Repository, repository
 
-
 SCRYPT_N = 2**14
 SCRYPT_R = 8
 SCRYPT_P = 1
+
+
+class EmailNotVerifiedError(Exception):
+    pass
 
 
 def normalize_email(email: str) -> str:
@@ -55,7 +58,9 @@ class AuthService:
     def __init__(self, repo: Repository = repository) -> None:
         self.repo = repo
 
-    def register(self, payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    def register(
+        self, payload: dict[str, Any], *, create_session: bool = True
+    ) -> tuple[dict[str, Any], str | None]:
         email = normalize_email(payload["email"])
         user = self.repo.create_user_with_shop(
             email=email,
@@ -73,7 +78,10 @@ class AuthService:
                 "voice": "Thân thiện, ngắn gọn, trung thực và ưu tiên thông tin có căn cứ.",
             },
         )
-        return self._public_user(user), self._new_session(user["id"])
+        if not settings.email_verification_required:
+            self.repo.mark_email_verified(user["id"])
+        token = self._new_session(user["id"]) if create_session else None
+        return self._public_user(user), token
 
     def login(self, email: str, password: str) -> tuple[dict[str, Any], str] | None:
         user = self.repo.get_user_by_email(normalize_email(email))
@@ -81,7 +89,33 @@ class AuthService:
             return None
         if not verify_password(password, user["password_hash"]):
             return None
+        if settings.email_verification_required and not self.repo.is_email_verified(user["id"]):
+            raise EmailNotVerifiedError
         return self._public_user(user), self._new_session(user["id"])
+
+    def issue_account_token(self, user_id: str, purpose: str, minutes: int) -> str:
+        token = secrets.token_urlsafe(32)
+        expires_at = (datetime.now(UTC) + timedelta(minutes=minutes)).isoformat()
+        self.repo.create_account_token(user_id, purpose, token_digest(token), expires_at)
+        return token
+
+    def confirm_email(self, token: str) -> dict[str, Any] | None:
+        account = self.repo.consume_account_token(
+            token_digest(token), "verify_email", datetime.now(UTC).isoformat()
+        )
+        if not account:
+            return None
+        self.repo.mark_email_verified(account["user_id"])
+        return account
+
+    def reset_password(self, token: str, new_password: str) -> dict[str, Any] | None:
+        account = self.repo.consume_account_token(
+            token_digest(token), "password_reset", datetime.now(UTC).isoformat()
+        )
+        if not account:
+            return None
+        self.repo.update_user_password(account["user_id"], hash_password(new_password))
+        return account
 
     def _new_session(self, user_id: str) -> str:
         token = secrets.token_urlsafe(32)
@@ -104,9 +138,13 @@ class AuthService:
         if token:
             self.repo.delete_auth_session(token_digest(token))
 
-    @staticmethod
-    def _public_user(user: dict[str, Any]) -> dict[str, Any]:
-        return {key: user[key] for key in ("id", "email", "display_name", "status", "created_at")}
+    def _public_user(self, user: dict[str, Any]) -> dict[str, Any]:
+        result = {
+            key: user[key]
+            for key in ("id", "email", "display_name", "status", "created_at")
+        }
+        result["email_verified"] = self.repo.is_email_verified(user["id"])
+        return result
 
     @staticmethod
     def set_session_cookie(response: Response, token: str) -> None:

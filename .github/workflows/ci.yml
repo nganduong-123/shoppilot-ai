@@ -13,6 +13,8 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check app tests scripts
+      - run: python -m compileall -q app scripts
       - run: pytest -q
       - run: python scripts/evaluate.py

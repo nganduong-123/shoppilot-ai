@@ -1,20 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
 import secrets
 from contextlib import asynccontextmanager
+from typing import Annotated
 from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.agent import sales_agent
-from app.auth import auth_service, require_user
+from app.auth import EmailNotVerifiedError, auth_service, require_user
 from app.channels.base import InboundMessage
 from app.channels.make import MakeMessengerAdapter
 from app.channels.meta import MetaMessengerAdapter
@@ -22,20 +24,27 @@ from app.channels.web import WebChannelAdapter
 from app.config import BASE_DIR, settings
 from app.copilot import inbox_copilot
 from app.database import init_database, is_integrity_error, using_postgres
+from app.email_service import email_service
 from app.inbox import inbox_service
+from app.jobs import job_worker
 from app.meta_oauth import meta_oauth_service
+from app.observability import RequestObservabilityMiddleware, metrics
 from app.rate_limit import enforce_rate_limit
 from app.repository import repository
 from app.schemas import (
+    AccountEmailRequest,
+    AccountTokenRequest,
     BotControlRequest,
     ChatRequest,
     ChatResponse,
-    MakeMessengerMessage,
-    InboxActionRequest,
-    ProductCreate,
+    EvaluationFeedback,
     HumanReplyRequest,
+    InboxActionRequest,
     LoginRequest,
+    MakeMessengerMessage,
     MetaConnectionComplete,
+    PasswordResetConfirm,
+    ProductCreate,
     RegisterRequest,
     ShopCreate,
     ShopUpdate,
@@ -60,7 +69,11 @@ async def lifespan(_: FastAPI):
                 f"Facebook Page {settings.meta_page_id}",
                 {"source": "environment"},
             )
-    yield
+    worker_task = asyncio.create_task(job_worker.run())
+    try:
+        yield
+    finally:
+        await job_worker.shutdown(worker_task)
 
 
 app = FastAPI(
@@ -69,6 +82,7 @@ app = FastAPI(
     description="Auditable multi-tenant sales and support agent for online shops.",
     lifespan=lifespan,
 )
+app.add_middleware(RequestObservabilityMiddleware)
 
 STATIC_DIR = BASE_DIR / "app" / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -122,8 +136,15 @@ def register_account(payload: RegisterRequest, request: Request, response: Respo
     )
     if not settings.registration_enabled:
         raise HTTPException(status_code=403, detail="Đăng ký tài khoản đang tạm đóng.")
+    if settings.email_verification_required and not email_service.configured:
+        raise HTTPException(
+            status_code=503,
+            detail="Dịch vụ xác minh email chưa được cấu hình.",
+        )
     try:
-        user, token = auth_service.register(payload.model_dump())
+        user, token = auth_service.register(
+            payload.model_dump(), create_session=not settings.email_verification_required
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=409, detail="Email hoặc mã cửa hàng đã được sử dụng."
@@ -134,8 +155,19 @@ def register_account(payload: RegisterRequest, request: Request, response: Respo
         raise HTTPException(
             status_code=409, detail="Email hoặc mã cửa hàng đã được sử dụng."
         ) from exc
-    auth_service.set_session_cookie(response, token)
-    return {"user": user, "shops": repository.list_user_shops(user["id"])}
+    verification_required = settings.email_verification_required
+    if verification_required:
+        verification_token = auth_service.issue_account_token(
+            user["id"], "verify_email", settings.verification_token_minutes
+        )
+        email_service.send_verification(user["email"], user["display_name"], verification_token)
+    elif token:
+        auth_service.set_session_cookie(response, token)
+    return {
+        "user": user,
+        "shops": repository.list_user_shops(user["id"]),
+        "verification_required": verification_required,
+    }
 
 
 @app.post("/api/auth/login")
@@ -147,12 +179,61 @@ def login_account(payload: LoginRequest, request: Request, response: Response) -
         settings.auth_rate_limit_window_seconds,
         enabled=settings.rate_limit_enabled,
     )
-    result = auth_service.login(payload.email, payload.password)
+    try:
+        result = auth_service.login(payload.email, payload.password)
+    except EmailNotVerifiedError as exc:
+        raise HTTPException(status_code=403, detail="Vui lòng xác minh email trước khi đăng nhập.") from exc
     if not result:
         raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng.")
     user, token = result
     auth_service.set_session_cookie(response, token)
     return {"user": user, "shops": repository.list_user_shops(user["id"])}
+
+
+@app.post("/api/auth/verify-email/request", status_code=202)
+def request_email_verification(payload: AccountEmailRequest, request: Request) -> dict:
+    enforce_rate_limit(
+        request, "auth", settings.auth_rate_limit_requests,
+        settings.auth_rate_limit_window_seconds, enabled=settings.rate_limit_enabled,
+    )
+    user = repository.get_user_by_email(payload.email.strip().casefold())
+    if user and not repository.is_email_verified(user["id"]) and email_service.configured:
+        token = auth_service.issue_account_token(
+            user["id"], "verify_email", settings.verification_token_minutes
+        )
+        email_service.send_verification(user["email"], user["display_name"], token)
+    return {"accepted": True}
+
+
+@app.post("/api/auth/verify-email/confirm")
+def confirm_email_verification(payload: AccountTokenRequest) -> dict:
+    account = auth_service.confirm_email(payload.token)
+    if not account:
+        raise HTTPException(status_code=400, detail="Liên kết xác minh không hợp lệ hoặc đã hết hạn.")
+    return {"verified": True}
+
+
+@app.post("/api/auth/password-reset/request", status_code=202)
+def request_password_reset(payload: AccountEmailRequest, request: Request) -> dict:
+    enforce_rate_limit(
+        request, "auth", settings.auth_rate_limit_requests,
+        settings.auth_rate_limit_window_seconds, enabled=settings.rate_limit_enabled,
+    )
+    user = repository.get_user_by_email(payload.email.strip().casefold())
+    if user and email_service.configured:
+        token = auth_service.issue_account_token(
+            user["id"], "password_reset", settings.password_reset_token_minutes
+        )
+        email_service.send_password_reset(user["email"], user["display_name"], token)
+    return {"accepted": True}
+
+
+@app.post("/api/auth/password-reset/confirm")
+def confirm_password_reset(payload: PasswordResetConfirm) -> dict:
+    account = auth_service.reset_password(payload.token, payload.password)
+    if not account:
+        raise HTTPException(status_code=400, detail="Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.")
+    return {"reset": True}
 
 
 @app.post("/api/auth/logout")
@@ -174,11 +255,32 @@ def health() -> dict:
         "model": settings.groq_model if settings.groq_api_key else "rule-fallback",
         "storage": "postgresql" if using_postgres() else "sqlite",
         "rate_limiting": settings.rate_limit_enabled,
+        "jobs": repository.job_stats(),
         "channels": {
             "web": True,
             "messenger": direct_messenger or make_messenger,
         },
     }
+
+
+@app.get("/api/health/live")
+def liveness() -> dict:
+    return {"status": "ok", "version": settings.app_version}
+
+
+@app.get("/api/health/ready")
+def readiness() -> dict:
+    result = health()
+    result["ready"] = True
+    return result
+
+
+@app.get("/metrics", include_in_schema=False, response_class=PlainTextResponse)
+def prometheus_metrics() -> PlainTextResponse:
+    return PlainTextResponse(
+        metrics.render(repository.job_stats()),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.get("/api/integrations/meta/status")
@@ -361,11 +463,19 @@ def create_product(slug: str, payload: ProductCreate, request: Request) -> dict:
 
 
 @app.post("/api/shops/{slug}/products/import", status_code=201)
-async def import_products(slug: str, request: Request, file: UploadFile = File(...)) -> dict:
+async def import_products(
+    slug: str, request: Request, file: Annotated[UploadFile, File(...)]
+) -> dict:
     shop = require_managed_shop(slug, request)
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Vui lòng tải file CSV.")
-    content = (await file.read()).decode("utf-8-sig")
+    raw = await file.read(settings.max_csv_upload_bytes + 1)
+    if len(raw) > settings.max_csv_upload_bytes:
+        raise HTTPException(status_code=413, detail="File CSV vượt quá giới hạn cho phép.")
+    try:
+        content = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="File CSV phải dùng mã hóa UTF-8.") from exc
     reader = csv.DictReader(io.StringIO(content))
     required = {"sku", "name", "category", "price", "stock"}
     if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
@@ -376,6 +486,8 @@ async def import_products(slug: str, request: Request, file: UploadFile = File(.
     imported = 0
     errors = []
     for line_number, row in enumerate(reader, 2):
+        if line_number - 1 > settings.max_csv_rows:
+            raise HTTPException(status_code=413, detail="File CSV có quá nhiều dòng.")
         try:
             attributes = {
                 key.removeprefix("attr_"): value
@@ -499,7 +611,7 @@ def verify_meta_webhook(request: Request) -> PlainTextResponse:
 
 
 @app.post("/api/webhooks/meta")
-async def receive_meta_webhook(request: Request, background_tasks: BackgroundTasks) -> dict:
+async def receive_meta_webhook(request: Request) -> dict:
     body = await request.body()
     signature_adapter = MetaMessengerAdapter()
     if not settings.meta_app_secret:
@@ -533,10 +645,8 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         adapter = MetaMessengerAdapter(page_id=page_id, page_access_token=page_token)
         events = adapter.parse_events({"object": payload.get("object"), "entry": [entry]})
         for event in events:
-            background_tasks.add_task(
-                inbox_service.process, shop, event, adapter, connection["id"]
-            )
-        accepted += len(events)
+            if job_worker.enqueue_meta_message(shop["id"], connection["id"], event):
+                accepted += 1
     return {"status": "accepted", "events": accepted}
 
 
@@ -703,6 +813,26 @@ def conversation_trace(conversation_id: str, request: Request) -> dict:
     ):
         raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập hội thoại này.")
     return trace
+
+
+@app.post("/api/conversations/{conversation_id}/feedback", status_code=201)
+def create_conversation_feedback(
+    conversation_id: str, payload: EvaluationFeedback, request: Request
+) -> dict:
+    trace = repository.get_trace(conversation_id)
+    if not trace:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    user = authenticated_user_if_required(request)
+    if settings.auth_required and user and not repository.get_shop_member(
+        trace["conversation"]["shop_id"], user["id"]
+    ):
+        raise HTTPException(status_code=403, detail="Bạn không có quyền đánh giá hội thoại này.")
+    return repository.add_conversation_feedback(
+        conversation_id,
+        payload.label,
+        payload.note,
+        user["id"] if user else None,
+    )
 
 
 @app.get("/api/shops/{slug}/metrics")

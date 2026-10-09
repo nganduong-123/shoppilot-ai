@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from app.database import CompatRow, POSTGRES_SCHEMA, PostgresConnection
+from app.database import POSTGRES_SCHEMA, CompatRow, PostgresConnection
 
 
 class FakeCursor:

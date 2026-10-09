@@ -44,4 +44,4 @@ When a staff member takes over, ShopPilot sends their reviewed reply through thi
 
 ## Production path
 
-The Make bridge is suitable for a pilot and portfolio demo. A commercial multi-shop release should add first-party Meta OAuth or an approved messaging provider, encrypted per-shop credentials, rate limits, durable retries and delivery monitoring.
+The Make bridge remains an optional compatibility path. The main production path uses first-party Meta OAuth, encrypted per-shop credentials, shared rate limits, durable retries, dead-letter state and delivery monitoring.

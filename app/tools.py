@@ -3,10 +3,13 @@ from __future__ import annotations
 import re
 import time
 import unicodedata
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 from uuid import uuid4
 
+from app.config import settings
 from app.database import db_session, json_dumps, json_loads, utc_now
+from app.integrations import commerce_connector
 from app.repository import Repository, repository
 
 
@@ -228,6 +231,16 @@ class ShopTools:
         }
 
     def calculate_shipping(self, location: str, order_value: int) -> dict[str, Any]:
+        if settings.shipping_quote_url:
+            quote = commerce_connector.quote_shipping(
+                shop_slug=self.shop["slug"],
+                location=location,
+                order_value=order_value,
+                currency=self.shop.get("currency", "VND"),
+            )
+            if quote:
+                quote["fee_display"] = money(quote["fee"]) if quote["fee"] else "Miễn phí"
+                return quote
         location_norm = normalize_text(location)
         is_hcm = any(token in location_norm for token in ["hcm", "ho chi minh", "sai gon", "quan"])
         threshold = 500_000 if self.shop["slug"] == "mint-fashion" else 600_000
@@ -360,7 +373,9 @@ class ShopTools:
             if name not in allowed:
                 raise ValueError(f"Tool không được phép: {name}")
             result = allowed[name](**arguments)
-        except Exception as exc:
+        # Provider failures become auditable observations instead of crashing
+        # the whole agent turn.
+        except Exception as exc:  # noqa: BLE001
             success = False
             result = {"error": str(exc), "success": False}
         duration = int((time.perf_counter() - started) * 1000)
@@ -378,6 +393,7 @@ def confirm_pending_order(
     if not pending or pending.get("type") != "confirm_order":
         return None
     draft_id = pending["draft_order_id"]
+    order_payload = None
     with db_session() as connection:
         row = connection.execute(
             "SELECT * FROM draft_orders WHERE id = ? AND status = 'awaiting_confirmation'",
@@ -401,6 +417,29 @@ def confirm_pending_order(
             "UPDATE draft_orders SET status = 'confirmed', updated_at = ? WHERE id = ?",
             (utc_now(), draft_id),
         )
+        if settings.commerce_order_webhook_url:
+            order_payload = {
+                "event": "order.confirmed",
+                "order_id": draft_id.replace("DR-", "SP-"),
+                "draft_order_id": draft_id,
+                "shop_id": row["shop_id"],
+                "conversation_id": conversation_id,
+                "items": items,
+                "subtotal": row["subtotal"],
+                "shipping_fee": row["shipping_fee"],
+                "total": row["total"],
+                "currency": "VND",
+                "confirmed_at": utc_now(),
+            }
+            # Persist the delivery job in the same transaction as stock and order
+            # changes. A process crash can no longer confirm an order without an
+            # outbox record for the external commerce system.
+            repo.enqueue_job(
+                "commerce_order",
+                order_payload,
+                dedupe_key=f"commerce:{draft_id}",
+                connection=connection,
+            )
     repo.update_conversation(conversation_id, clear_pending=True)
     return {
         "confirmed": True,

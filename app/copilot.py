@@ -9,7 +9,6 @@ from app.agent import normalize_text
 from app.config import settings
 from app.repository import Repository, repository
 
-
 INJECTION_MARKERS = (
     "bo qua huong dan", "ignore previous", "system prompt", "tiet lo prompt",
     "du lieu shop khac", "tu thay doi gia",
@@ -134,9 +133,9 @@ Trạng thái vận hành: {conversation['status']}; người phụ trách: {con
         suggested_reply = data["suggested_reply"]
         raw_flags = data.get("risk_flags", [])
         if not isinstance(summary, str) or not isinstance(suggested_reply, str):
-            raise ValueError("Groq trả về sai kiểu dữ liệu.")
+            raise TypeError("Groq trả về sai kiểu dữ liệu.")
         if not isinstance(raw_flags, list):
-            raise ValueError("Groq trả về risk_flags không hợp lệ.")
+            raise TypeError("Groq trả về risk_flags không hợp lệ.")
         summary = summary.strip()
         suggested_reply = suggested_reply.strip()
         risk_flags = [str(flag).strip() for flag in raw_flags if str(flag).strip()]
