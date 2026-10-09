@@ -302,6 +302,195 @@ class Repository:
                 (shop_id, user_id, role, utc_now()),
             )
 
+    def list_shop_team(self, shop_id: int) -> dict[str, list[dict[str, Any]]]:
+        now = utc_now()
+        with db_session() as connection:
+            members = connection.execute(
+                """
+                SELECT u.id AS user_id, u.email, u.display_name, u.status,
+                       sm.role, sm.created_at
+                FROM shop_members sm
+                JOIN users u ON u.id = sm.user_id
+                WHERE sm.shop_id = ?
+                ORDER BY CASE sm.role WHEN 'owner' THEN 0 WHEN 'manager' THEN 1 ELSE 2 END,
+                         u.display_name
+                """,
+                (shop_id,),
+            ).fetchall()
+            invitations = connection.execute(
+                """
+                SELECT id, email, role, expires_at, created_at
+                FROM shop_invitations
+                WHERE shop_id = ? AND accepted_at IS NULL AND expires_at > ?
+                ORDER BY created_at DESC
+                """,
+                (shop_id, now),
+            ).fetchall()
+        return {
+            "members": [dict(row) for row in members],
+            "invitations": [dict(row) for row in invitations],
+        }
+
+    def create_shop_invitation(
+        self,
+        *,
+        shop_id: int,
+        email: str,
+        role: str,
+        token_hash: str,
+        expires_at: str,
+        invited_by: str,
+    ) -> dict[str, Any]:
+        invitation_id = str(uuid4())
+        now = utc_now()
+        with db_session() as connection:
+            existing_member = connection.execute(
+                """
+                SELECT 1 FROM shop_members sm
+                JOIN users u ON u.id = sm.user_id
+                WHERE sm.shop_id = ? AND u.email = ?
+                """,
+                (shop_id, email),
+            ).fetchone()
+            if existing_member:
+                raise ValueError("User is already a member")
+            connection.execute(
+                """
+                DELETE FROM shop_invitations
+                WHERE shop_id = ? AND email = ? AND accepted_at IS NULL
+                """,
+                (shop_id, email),
+            )
+            connection.execute(
+                """
+                INSERT INTO shop_invitations
+                    (id, shop_id, email, role, token_hash, expires_at,
+                     invited_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    invitation_id,
+                    shop_id,
+                    email,
+                    role,
+                    token_hash,
+                    expires_at,
+                    invited_by,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT id, email, role, expires_at, created_at
+                FROM shop_invitations WHERE id = ?
+                """,
+                (invitation_id,),
+            ).fetchone()
+            return dict(row)
+
+    def accept_shop_invitation(
+        self, token_hash: str, user_id: str, now: str
+    ) -> dict[str, Any] | None:
+        with db_session() as connection:
+            invitation = connection.execute(
+                """
+                SELECT * FROM shop_invitations
+                WHERE token_hash = ? AND accepted_at IS NULL AND expires_at > ?
+                """,
+                (token_hash, now),
+            ).fetchone()
+            user = connection.execute(
+                "SELECT email FROM users WHERE id = ? AND status = 'active'",
+                (user_id,),
+            ).fetchone()
+            if not invitation or not user or user["email"] != invitation["email"]:
+                return None
+            updated = connection.execute(
+                """
+                UPDATE shop_invitations SET accepted_at = ?
+                WHERE id = ? AND accepted_at IS NULL
+                """,
+                (now, invitation["id"]),
+            )
+            if updated.rowcount != 1:
+                return None
+            connection.execute(
+                """
+                INSERT INTO shop_members (shop_id, user_id, role, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(shop_id, user_id) DO UPDATE SET role = excluded.role
+                """,
+                (invitation["shop_id"], user_id, invitation["role"], now),
+            )
+            shop = connection.execute(
+                "SELECT slug, name FROM shops WHERE id = ?", (invitation["shop_id"],)
+            ).fetchone()
+            return {**dict(shop), "role": invitation["role"]}
+
+    def revoke_shop_invitation(self, shop_id: int, invitation_id: str) -> bool:
+        with db_session() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM shop_invitations
+                WHERE id = ? AND shop_id = ? AND accepted_at IS NULL
+                """,
+                (invitation_id, shop_id),
+            )
+            return cursor.rowcount == 1
+
+    def update_shop_member_role(
+        self, shop_id: int, user_id: str, role: str
+    ) -> dict[str, Any] | None:
+        with db_session() as connection:
+            member = connection.execute(
+                "SELECT role FROM shop_members WHERE shop_id = ? AND user_id = ?",
+                (shop_id, user_id),
+            ).fetchone()
+            if not member:
+                return None
+            if member["role"] == "owner" and role != "owner":
+                owners = connection.execute(
+                    "SELECT COUNT(*) FROM shop_members WHERE shop_id = ? AND role = 'owner'",
+                    (shop_id,),
+                ).fetchone()[0]
+                if owners <= 1:
+                    raise ValueError("Shop must keep at least one owner")
+            connection.execute(
+                "UPDATE shop_members SET role = ? WHERE shop_id = ? AND user_id = ?",
+                (role, shop_id, user_id),
+            )
+            row = connection.execute(
+                """
+                SELECT u.id AS user_id, u.email, u.display_name, u.status,
+                       sm.role, sm.created_at
+                FROM shop_members sm JOIN users u ON u.id = sm.user_id
+                WHERE sm.shop_id = ? AND sm.user_id = ?
+                """,
+                (shop_id, user_id),
+            ).fetchone()
+            return dict(row)
+
+    def remove_shop_member(self, shop_id: int, user_id: str) -> bool:
+        with db_session() as connection:
+            member = connection.execute(
+                "SELECT role FROM shop_members WHERE shop_id = ? AND user_id = ?",
+                (shop_id, user_id),
+            ).fetchone()
+            if not member:
+                return False
+            if member["role"] == "owner":
+                owners = connection.execute(
+                    "SELECT COUNT(*) FROM shop_members WHERE shop_id = ? AND role = 'owner'",
+                    (shop_id,),
+                ).fetchone()[0]
+                if owners <= 1:
+                    raise ValueError("Shop must keep at least one owner")
+            cursor = connection.execute(
+                "DELETE FROM shop_members WHERE shop_id = ? AND user_id = ?",
+                (shop_id, user_id),
+            )
+            return cursor.rowcount == 1
+
     def list_shops(self) -> list[dict[str, Any]]:
         with db_session() as connection:
             rows = connection.execute(
@@ -544,6 +733,141 @@ class Repository:
             "handoffs": [dict(row) for row in handoffs],
         }
 
+    def list_orders(self, shop_id: int) -> list[dict[str, Any]]:
+        with db_session() as connection:
+            rows = connection.execute(
+                """
+                SELECT d.*,
+                       COALESCE(f.status,
+                           CASE WHEN d.status = 'confirmed' THEN 'processing'
+                                ELSE d.status END) AS fulfillment_status,
+                       f.tracking_code, f.note AS fulfillment_note,
+                       f.updated_at AS fulfillment_updated_at
+                FROM draft_orders d
+                LEFT JOIN order_fulfillment f ON f.order_id = d.id
+                WHERE d.shop_id = ?
+                ORDER BY d.created_at DESC
+                """,
+                (shop_id,),
+            ).fetchall()
+        orders = []
+        for row in rows:
+            order = dict(row)
+            order["customer"] = json_loads(order.pop("customer_json"), {})
+            order["items"] = json_loads(order.pop("items_json"), [])
+            orders.append(order)
+        return orders
+
+    def update_order_fulfillment(
+        self,
+        *,
+        shop_id: int,
+        order_id: str,
+        status: str,
+        tracking_code: str | None,
+        note: str | None,
+        updated_by: str,
+    ) -> dict[str, Any] | None:
+        now = utc_now()
+        with db_session() as connection:
+            order = connection.execute(
+                """
+                SELECT id FROM draft_orders
+                WHERE id = ? AND shop_id = ? AND status = 'confirmed'
+                """,
+                (order_id, shop_id),
+            ).fetchone()
+            if not order:
+                return None
+            connection.execute(
+                """
+                INSERT INTO order_fulfillment
+                    (order_id, status, tracking_code, note, updated_by, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(order_id) DO UPDATE SET
+                    status = excluded.status,
+                    tracking_code = excluded.tracking_code,
+                    note = excluded.note,
+                    updated_by = excluded.updated_by,
+                    updated_at = excluded.updated_at
+                """,
+                (order_id, status, tracking_code, note, updated_by, now),
+            )
+            row = connection.execute(
+                "SELECT * FROM order_fulfillment WHERE order_id = ?", (order_id,)
+            ).fetchone()
+            return dict(row)
+
+    def get_shop_subscription(self, shop_id: int) -> dict[str, Any]:
+        with db_session() as connection:
+            row = connection.execute(
+                "SELECT * FROM shop_subscriptions WHERE shop_id = ?", (shop_id,)
+            ).fetchone()
+        if row:
+            return dict(row)
+        return {
+            "shop_id": shop_id,
+            "plan": "free",
+            "status": "active",
+            "stripe_customer_id": None,
+            "stripe_subscription_id": None,
+            "current_period_end": None,
+            "updated_at": None,
+        }
+
+    def get_subscription_by_provider_id(self, subscription_id: str) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM shop_subscriptions
+                WHERE stripe_subscription_id = ?
+                """,
+                (subscription_id,),
+            ).fetchone()
+            return row_to_dict(row)
+
+    def upsert_shop_subscription(
+        self,
+        *,
+        shop_id: int,
+        plan: str,
+        status: str,
+        customer_id: str | None,
+        subscription_id: str | None,
+        current_period_end: str | None = None,
+    ) -> dict[str, Any]:
+        with db_session() as connection:
+            connection.execute(
+                """
+                INSERT INTO shop_subscriptions
+                    (shop_id, plan, status, stripe_customer_id,
+                     stripe_subscription_id, current_period_end, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(shop_id) DO UPDATE SET
+                    plan = excluded.plan,
+                    status = excluded.status,
+                    stripe_customer_id = COALESCE(excluded.stripe_customer_id,
+                                                  shop_subscriptions.stripe_customer_id),
+                    stripe_subscription_id = COALESCE(excluded.stripe_subscription_id,
+                                                      shop_subscriptions.stripe_subscription_id),
+                    current_period_end = excluded.current_period_end,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    shop_id,
+                    plan,
+                    status,
+                    customer_id,
+                    subscription_id,
+                    current_period_end,
+                    utc_now(),
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM shop_subscriptions WHERE shop_id = ?", (shop_id,)
+            ).fetchone()
+            return dict(row)
+
     def metrics(self, shop_id: int) -> dict[str, Any]:
         with db_session() as connection:
             row = connection.execute(
@@ -576,14 +900,18 @@ class Repository:
         data = dict(row)
         data["product_count"] = product_count
         conversations = data["conversations"] or 0
-        data["automation_rate"] = round(
-            100 * (conversations - data["handoffs"]) / conversations, 1
-        ) if conversations else 100.0
+        data["automation_rate"] = (
+            round(100 * (conversations - data["handoffs"]) / conversations, 1)
+            if conversations
+            else 100.0
+        )
         data["feedback_total"] = feedback["total"] or 0
         data["feedback_helpful"] = feedback["helpful"] or 0
-        data["feedback_helpful_rate"] = round(
-            100 * data["feedback_helpful"] / data["feedback_total"], 1
-        ) if data["feedback_total"] else None
+        data["feedback_helpful_rate"] = (
+            round(100 * data["feedback_helpful"] / data["feedback_total"], 1)
+            if data["feedback_total"]
+            else None
+        )
         return data
 
     def add_conversation_feedback(
@@ -1146,8 +1474,7 @@ class Repository:
                 placeholders = ",".join("?" for _ in conversation_ids)
                 for table in ("messages", "tool_calls", "draft_orders", "handoffs"):
                     deleted_records += connection.execute(
-                        f"SELECT COUNT(*) FROM {table} "
-                        f"WHERE conversation_id IN ({placeholders})",
+                        f"SELECT COUNT(*) FROM {table} WHERE conversation_id IN ({placeholders})",
                         conversation_ids,
                     ).fetchone()[0]
                 deleted_records += len(conversation_ids)

@@ -9,6 +9,7 @@ Set these values in the deployment secret store, never in Git:
 - Meta App ID, App Secret and webhook verify token when Messenger is enabled.
 - `EMAIL_PROVIDER=resend`, `EMAIL_FROM`, `RESEND_API_KEY`, then `EMAIL_VERIFICATION_REQUIRED=true` when account email is enabled.
 - `SHIPPING_QUOTE_URL` and/or `COMMERCE_ORDER_WEBHOOK_URL` plus `INTEGRATION_WEBHOOK_SECRET` when external fulfillment is enabled.
+- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PRO` and `STRIPE_PRICE_BUSINESS` when paid plans are enabled. Register `/api/webhooks/stripe` for Checkout and subscription events.
 
 Provider credentials are external activation inputs. The server refuses mandatory email verification when no email provider is configured and never returns a secret through its status APIs.
 
@@ -28,6 +29,7 @@ After deploy, verify:
 2. `/api/health/ready` returns `ready=true`, PostgreSQL storage and no growing failed-job count.
 3. `/metrics` is collected by the monitoring system.
 4. Register/login, widget chat, human takeover and one provider webhook are exercised in the target environment.
+5. When billing is enabled, complete a Stripe test-mode checkout, open Customer Portal and confirm the signed webhook updates the workspace plan.
 
 ## Queue recovery
 

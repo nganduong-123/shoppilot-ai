@@ -1,6 +1,6 @@
-# Messenger pilot through Make
+# Messenger bridge through Make
 
-This optional bridge provides a fast pilot while direct Meta Developer access is pending. A shop owner never shares a Facebook password with ShopPilot. They authorize Make on Facebook's own screen and select the Page they manage.
+This optional bridge connects Messenger while direct Meta Developer access is pending. A shop owner never shares a Facebook password with ShopPilot. They authorize Make on Facebook's own screen and select the Page they manage.
 
 ## Environment
 

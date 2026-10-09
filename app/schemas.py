@@ -111,6 +111,25 @@ class EvaluationFeedback(BaseModel):
     note: str | None = Field(default=None, max_length=1000)
 
 
+class TeamInvitationCreate(BaseModel):
+    email: str = Field(pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$", max_length=254)
+    role: Literal["manager", "agent"] = "agent"
+
+
+class TeamRoleUpdate(BaseModel):
+    role: Literal["owner", "manager", "agent"]
+
+
+class OrderFulfillmentUpdate(BaseModel):
+    status: Literal["processing", "shipped", "delivered"]
+    tracking_code: str | None = Field(default=None, max_length=120)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class BillingCheckoutRequest(BaseModel):
+    plan: Literal["pro", "business"]
+
+
 class MetaConnectionComplete(BaseModel):
     state: str = Field(min_length=20, max_length=300)
     page_id: str = Field(min_length=1, max_length=200)

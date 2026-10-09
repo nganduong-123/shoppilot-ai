@@ -61,7 +61,7 @@ không làm lộ token:
 Callback xóa dữ liệu xác minh `signed_request` bằng App Secret, xóa hội thoại của Meta user
 và trả `confirmation_code` cùng URL theo dõi. Không dùng URL tunnel ngắn hạn khi nộp review.
 
-## Giới hạn của pilot
+## Giới hạn tích hợp
 
 - OAuth onboarding, token mã hóa và ánh xạ Page theo tenant đã hỗ trợ nhiều shop; mỗi Page chỉ thuộc một workspace tại một thời điểm.
 - Messenger chỉ cho phép gửi phản hồi theo chính sách và cửa sổ nhắn tin của Meta.

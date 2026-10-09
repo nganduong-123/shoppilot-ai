@@ -6,6 +6,7 @@ import io
 import json
 import secrets
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from urllib.parse import quote
 from uuid import uuid4
@@ -16,7 +17,8 @@ from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.agent import sales_agent
-from app.auth import EmailNotVerifiedError, auth_service, require_user
+from app.auth import EmailNotVerifiedError, auth_service, require_user, token_digest
+from app.billing import PLANS, billing_service
 from app.channels.base import InboundMessage
 from app.channels.make import MakeMessengerAdapter
 from app.channels.meta import MetaMessengerAdapter
@@ -34,6 +36,7 @@ from app.repository import repository
 from app.schemas import (
     AccountEmailRequest,
     AccountTokenRequest,
+    BillingCheckoutRequest,
     BotControlRequest,
     ChatRequest,
     ChatResponse,
@@ -43,11 +46,14 @@ from app.schemas import (
     LoginRequest,
     MakeMessengerMessage,
     MetaConnectionComplete,
+    OrderFulfillmentUpdate,
     PasswordResetConfirm,
     ProductCreate,
     RegisterRequest,
     ShopCreate,
     ShopUpdate,
+    TeamInvitationCreate,
+    TeamRoleUpdate,
     WebChannelMessage,
 )
 from app.seed import seed_demo_data
@@ -329,6 +335,17 @@ def require_shop_owner(slug: str, request: Request) -> tuple[dict, dict]:
     return shop, user
 
 
+def require_shop_role(
+    slug: str, request: Request, allowed_roles: set[str]
+) -> tuple[dict, dict, dict]:
+    user = require_user(request)
+    shop = require_shop(slug)
+    member = repository.get_shop_member(shop["id"], user["id"])
+    if not member or member["role"] not in allowed_roles:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền thực hiện thao tác này.")
+    return shop, user, member
+
+
 @app.get("/api/shops/{slug}/integrations/meta/connect")
 def start_meta_oauth(slug: str, request: Request) -> dict:
     shop, user = require_shop_owner(slug, request)
@@ -400,7 +417,7 @@ def authenticated_user_if_required(request: Request) -> dict | None:
 def require_managed_shop(slug: str, request: Request) -> dict:
     shop = require_shop(slug)
     user = authenticated_user_if_required(request)
-    if settings.auth_required and user and not repository.get_shop_member(shop["id"], user["id"]):
+    if user and not repository.get_shop_member(shop["id"], user["id"]):
         raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập cửa hàng này.")
     return shop
 
@@ -408,7 +425,7 @@ def require_managed_shop(slug: str, request: Request) -> dict:
 @app.get("/api/shops")
 def list_shops(request: Request) -> list[dict]:
     user = authenticated_user_if_required(request)
-    if settings.auth_required and user:
+    if user:
         return repository.list_user_shops(user["id"])
     return repository.list_shops()
 
@@ -443,6 +460,192 @@ def get_shop(slug: str) -> dict:
 def update_shop(slug: str, payload: ShopUpdate, request: Request) -> dict:
     shop = require_managed_shop(slug, request)
     return repository.update_shop(shop["id"], payload.model_dump(exclude_unset=True))
+
+
+@app.get("/api/shops/{slug}/team")
+def get_shop_team(slug: str, request: Request) -> dict:
+    shop, user, membership = require_shop_role(slug, request, {"owner", "manager", "agent"})
+    team = repository.list_shop_team(shop["id"])
+    if membership["role"] != "owner":
+        team["invitations"] = []
+    return {**team, "current_user_id": user["id"], "current_role": membership["role"]}
+
+
+@app.post("/api/shops/{slug}/team/invitations", status_code=201)
+def invite_shop_member(slug: str, payload: TeamInvitationCreate, request: Request) -> dict:
+    shop, user, _ = require_shop_role(slug, request, {"owner"})
+    email = payload.email.strip().casefold()
+    token = secrets.token_urlsafe(32)
+    expires_at = (datetime.now(UTC) + timedelta(days=7)).isoformat()
+    try:
+        invitation = repository.create_shop_invitation(
+            shop_id=shop["id"],
+            email=email,
+            role=payload.role,
+            token_hash=token_digest(token),
+            expires_at=expires_at,
+            invited_by=user["id"],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Email này đã là thành viên của shop.") from exc
+    sent = False
+    if email_service.configured:
+        sent = email_service.send_team_invitation(email, user["display_name"], shop["name"], token)
+    return {
+        **invitation,
+        "email_sent": sent,
+        "invite_url": f"{settings.public_base_url.rstrip('/')}/login?invite={quote(token)}",
+    }
+
+
+@app.post("/api/invitations/{token}/accept")
+def accept_shop_invitation(token: str, request: Request) -> dict:
+    if len(token) < 20 or len(token) > 300:
+        raise HTTPException(status_code=400, detail="Lời mời không hợp lệ hoặc đã hết hạn.")
+    user = require_user(request)
+    shop = repository.accept_shop_invitation(
+        token_digest(token), user["id"], datetime.now(UTC).isoformat()
+    )
+    if not shop:
+        raise HTTPException(
+            status_code=400,
+            detail="Lời mời không hợp lệ, đã hết hạn hoặc không dành cho email này.",
+        )
+    return {"accepted": True, "shop": shop}
+
+
+@app.delete("/api/shops/{slug}/team/invitations/{invitation_id}")
+def revoke_shop_invitation(slug: str, invitation_id: str, request: Request) -> dict:
+    shop, _, _ = require_shop_role(slug, request, {"owner"})
+    if not repository.revoke_shop_invitation(shop["id"], invitation_id):
+        raise HTTPException(status_code=404, detail="Không tìm thấy lời mời đang chờ.")
+    return {"revoked": True}
+
+
+@app.patch("/api/shops/{slug}/team/members/{user_id}")
+def update_shop_member(slug: str, user_id: str, payload: TeamRoleUpdate, request: Request) -> dict:
+    shop, current_user, _ = require_shop_role(slug, request, {"owner"})
+    if user_id == current_user["id"] and payload.role != "owner":
+        raise HTTPException(
+            status_code=400,
+            detail="Hãy chuyển quyền owner cho người khác trước khi đổi vai trò của bạn.",
+        )
+    try:
+        member = repository.update_shop_member_role(shop["id"], user_id, payload.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Shop phải còn ít nhất một owner.") from exc
+    if not member:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thành viên.")
+    return member
+
+
+@app.delete("/api/shops/{slug}/team/members/{user_id}")
+def remove_shop_member(slug: str, user_id: str, request: Request) -> dict:
+    shop, current_user, _ = require_shop_role(slug, request, {"owner"})
+    if user_id == current_user["id"]:
+        raise HTTPException(status_code=400, detail="Bạn không thể tự xóa khỏi workspace.")
+    try:
+        removed = repository.remove_shop_member(shop["id"], user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Shop phải còn ít nhất một owner.") from exc
+    if not removed:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thành viên.")
+    return {"removed": True}
+
+
+@app.get("/api/shops/{slug}/orders")
+def list_shop_orders(slug: str, request: Request) -> list[dict]:
+    shop, _, _ = require_shop_role(slug, request, {"owner", "manager", "agent"})
+    return repository.list_orders(shop["id"])
+
+
+@app.patch("/api/shops/{slug}/orders/{order_id}/fulfillment")
+def update_shop_order_fulfillment(
+    slug: str,
+    order_id: str,
+    payload: OrderFulfillmentUpdate,
+    request: Request,
+) -> dict:
+    shop, user, _ = require_shop_role(slug, request, {"owner", "manager", "agent"})
+    fulfillment = repository.update_order_fulfillment(
+        shop_id=shop["id"],
+        order_id=order_id,
+        status=payload.status,
+        tracking_code=payload.tracking_code,
+        note=payload.note,
+        updated_by=user["id"],
+    )
+    if not fulfillment:
+        raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng đã xác nhận.")
+    return fulfillment
+
+
+@app.get("/api/shops/{slug}/billing")
+def get_shop_billing(slug: str, request: Request) -> dict:
+    shop, _, membership = require_shop_role(slug, request, {"owner", "manager", "agent"})
+    subscription = repository.get_shop_subscription(shop["id"])
+    public_subscription = {
+        key: subscription.get(key)
+        for key in ("shop_id", "plan", "status", "current_period_end", "updated_at")
+    }
+    return {
+        "configured": billing_service.configured,
+        "plans": PLANS,
+        "subscription": public_subscription,
+        "has_billing_account": bool(subscription.get("stripe_customer_id")),
+        "can_manage": membership["role"] == "owner",
+    }
+
+
+@app.post("/api/shops/{slug}/billing/checkout")
+def create_billing_checkout(slug: str, payload: BillingCheckoutRequest, request: Request) -> dict:
+    shop, user, _ = require_shop_role(slug, request, {"owner"})
+    try:
+        url = billing_service.create_checkout(shop=shop, user=user, plan=payload.plan)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail="Không thể kết nối Stripe lúc này. Vui lòng thử lại."
+        ) from exc
+    return {"url": url}
+
+
+@app.post("/api/shops/{slug}/billing/portal")
+def create_billing_portal(slug: str, request: Request) -> dict:
+    shop, _, _ = require_shop_role(slug, request, {"owner"})
+    subscription = repository.get_shop_subscription(shop["id"])
+    customer_id = subscription.get("stripe_customer_id")
+    if not customer_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Workspace chưa có tài khoản thanh toán Stripe.",
+        )
+    try:
+        url = billing_service.create_portal(customer_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail="Không thể mở cổng thanh toán lúc này."
+        ) from exc
+    return {"url": url}
+
+
+@app.post("/api/webhooks/stripe")
+async def stripe_webhook(request: Request) -> dict:
+    body = await request.body()
+    signature = request.headers.get("Stripe-Signature", "")
+    if not billing_service.verify_signature(body, signature):
+        raise HTTPException(status_code=400, detail="Chữ ký Stripe không hợp lệ.")
+    try:
+        event = json.loads(body)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Payload Stripe không hợp lệ.") from exc
+    return {
+        "received": True,
+        "applied": billing_service.apply_event(event),
+    }
 
 
 @app.get("/api/shops/{slug}/products")
@@ -668,8 +871,7 @@ async def receive_meta_data_deletion(request: Request) -> dict:
         confirmation_code=confirmation_code,
     )
     status_url = (
-        f"{settings.public_base_url.rstrip('/')}/data-deletion"
-        f"?code={quote(confirmation_code)}"
+        f"{settings.public_base_url.rstrip('/')}/data-deletion?code={quote(confirmation_code)}"
     )
     return {"url": status_url, "confirmation_code": confirmation_code}
 
@@ -778,7 +980,9 @@ async def send_inbox_reply(
                 )
         else:
             connection = repository.get_channel_connection(conversation["connection_id"])
-            token_enc = connection.get("config", {}).get("page_access_token_enc") if connection else None
+            token_enc = (
+                connection.get("config", {}).get("page_access_token_enc") if connection else None
+            )
             adapter = MetaMessengerAdapter(
                 page_id=connection["external_account_id"] if connection else None,
                 page_access_token=decrypt_secret(token_enc) if token_enc else None,
@@ -808,8 +1012,10 @@ def conversation_trace(conversation_id: str, request: Request) -> dict:
     if not trace:
         raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
     user = authenticated_user_if_required(request)
-    if settings.auth_required and user and not repository.get_shop_member(
-        trace["conversation"]["shop_id"], user["id"]
+    if (
+        settings.auth_required
+        and user
+        and not repository.get_shop_member(trace["conversation"]["shop_id"], user["id"])
     ):
         raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập hội thoại này.")
     return trace
@@ -823,8 +1029,10 @@ def create_conversation_feedback(
     if not trace:
         raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
     user = authenticated_user_if_required(request)
-    if settings.auth_required and user and not repository.get_shop_member(
-        trace["conversation"]["shop_id"], user["id"]
+    if (
+        settings.auth_required
+        and user
+        and not repository.get_shop_member(trace["conversation"]["shop_id"], user["id"])
     ):
         raise HTTPException(status_code=403, detail="Bạn không có quyền đánh giá hội thoại này.")
     return repository.add_conversation_feedback(

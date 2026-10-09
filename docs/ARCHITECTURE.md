@@ -71,6 +71,16 @@ Worker claim job bằng cập nhật có điều kiện, retry theo exponential 
 
 Email xác minh và đặt lại mật khẩu dùng token ngẫu nhiên một lần; database chỉ lưu SHA-256 của token. Token có hạn dùng, bị đánh dấu đã sử dụng atomically và mọi phiên đăng nhập cũ bị thu hồi sau khi đổi mật khẩu. Email tồn tại hay không không được lộ qua endpoint yêu cầu reset.
 
+Owner có thể mời thành viên bằng liên kết ngẫu nhiên hết hạn sau bảy ngày. Database chỉ lưu hash của token, tài khoản chấp nhận phải trùng email được mời, và hệ thống không cho xóa hoặc hạ quyền owner cuối cùng. Manager và Agent đọc team nhưng chỉ Owner nhìn thấy, tạo hoặc thu hồi lời mời và thay đổi vai trò.
+
+## Vận hành đơn hàng
+
+Sau khi khách xác nhận, đơn xuất hiện trong backoffice với trạng thái `processing`. Thành viên của đúng tenant có thể chuyển sang `shipped` hoặc `delivered`, lưu mã vận đơn và ghi chú. API luôn kiểm tra membership; một thành viên không thể đọc hay cập nhật đơn của shop khác.
+
+## Subscription billing
+
+Mỗi shop có một subscription độc lập. Owner khởi tạo Stripe Checkout hoặc Customer Portal; secret và price ID chỉ nằm trong deployment secret store. Stripe gọi `/api/webhooks/stripe`, hệ thống kiểm tra HMAC, timestamp chống replay rồi mới upsert customer, subscription, plan và kỳ gia hạn. Khi Stripe chưa được cấu hình, workspace tiếp tục chạy gói Free và giao diện không cho tạo giao dịch giả.
+
 ## Chống lạm dụng
 
 Các route đăng ký/đăng nhập dùng chung một quota theo địa chỉ client; API chat và widget dùng quota riêng. Bộ đếm cửa sổ thời gian nằm trong PostgreSQL nên nhiều web instance vẫn áp dụng cùng một quota. Khi vượt ngưỡng, API trả `429 Too Many Requests` cùng header `Retry-After`, giúp client biết thời điểm thử lại.

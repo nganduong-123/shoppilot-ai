@@ -232,6 +232,37 @@ try {
     "Meta review URLs render",
   );
 
+  await client.navigate(`${base}/login`, "#register-tab");
+  await client.evaluate(`document.querySelector("#register-tab").click();
+    Object.entries(${JSON.stringify({
+      display_name: "E2E Owner",
+      email: `e2e-${Date.now()}@example.com`,
+      shop_name: "E2E Commerce",
+      shop_slug: `e2e-commerce-${Date.now()}`,
+      category: "Retail",
+      password: "e2e-password-123",
+    })}).forEach(([name,value])=>document.querySelector('#register-form [name="'+name+'"]').value=value);
+    document.querySelector("#register-form").requestSubmit();`);
+  await waitFor(
+    () => client.evaluate(`location.pathname === "/" && !!document.querySelector('[data-view="team"]')`),
+    "registered owner dashboard",
+  );
+  await client.evaluate(`document.querySelector('[data-view="team"]').click()`);
+  await waitFor(
+    () => client.evaluate(`document.querySelectorAll("#team-members .management-row").length === 1 && document.querySelector("#team-role-note").textContent.includes("owner")`),
+    "team ownership renders",
+  );
+  await client.evaluate(`document.querySelector('[data-view="billing"]').click()`);
+  await waitFor(
+    () => client.evaluate(`document.querySelectorAll("#billing-plans .billing-card").length === 3 && document.querySelector("#billing-current-plan").textContent === "Free"`),
+    "billing plans render",
+  );
+  await client.evaluate(`document.querySelector('[data-view="orders"]').click()`);
+  await waitFor(
+    () => client.evaluate(`document.querySelector("#orders-total").textContent === "0"`),
+    "order operations render",
+  );
+
   console.log(JSON.stringify({
     passed: true,
     version: health.version,
@@ -247,6 +278,9 @@ try {
       "priority_and_sla_queue",
       "resolve_workflow",
       "integration_readiness",
+      "team_access_management",
+      "subscription_billing",
+      "order_operations",
     ],
   }, null, 2));
   client.socket.close();

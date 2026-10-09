@@ -269,6 +269,37 @@ CREATE TABLE IF NOT EXISTS conversation_feedback (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS shop_invitations (
+    id TEXT PRIMARY KEY,
+    shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'agent',
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    accepted_at TEXT,
+    invited_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS order_fulfillment (
+    order_id TEXT PRIMARY KEY REFERENCES draft_orders(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'processing',
+    tracking_code TEXT,
+    note TEXT,
+    updated_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS shop_subscriptions (
+    shop_id INTEGER PRIMARY KEY REFERENCES shops(id) ON DELETE CASCADE,
+    plan TEXT NOT NULL DEFAULT 'free',
+    status TEXT NOT NULL DEFAULT 'active',
+    stripe_customer_id TEXT UNIQUE,
+    stripe_subscription_id TEXT UNIQUE,
+    current_period_end TEXT,
+    updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_conversation ON tool_calls(conversation_id);
@@ -293,12 +324,16 @@ CREATE INDEX IF NOT EXISTS idx_jobs_ready
     ON jobs(status, available_at);
 CREATE INDEX IF NOT EXISTS idx_feedback_conversation
     ON conversation_feedback(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_shop_invitations_pending
+    ON shop_invitations(shop_id, email, accepted_at, expires_at);
+CREATE INDEX IF NOT EXISTS idx_orders_shop_status
+    ON draft_orders(shop_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_provider
+    ON shop_subscriptions(stripe_subscription_id, stripe_customer_id);
 """
 
 # Keep JSON and timestamps as text so repository queries remain portable.
-POSTGRES_SCHEMA = SCHEMA.replace(
-    "INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY"
-)
+POSTGRES_SCHEMA = SCHEMA.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
 
 SERIAL_TABLES = {
     "shops",

@@ -20,7 +20,7 @@ def env_bool(name: str, default: bool = False) -> bool:
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "ShopPilot AI"
-    app_version: str = "1.0.0"
+    app_version: str = "1.1.0"
     app_env: str = os.getenv("APP_ENV", "development")
     database_path: Path = BASE_DIR / os.getenv("DATABASE_PATH", "data/shoppilot.db")
     database_url: str | None = os.getenv("DATABASE_URL")
@@ -66,6 +66,10 @@ class Settings:
     shipping_quote_url: str | None = os.getenv("SHIPPING_QUOTE_URL")
     commerce_order_webhook_url: str | None = os.getenv("COMMERCE_ORDER_WEBHOOK_URL")
     integration_webhook_secret: str | None = os.getenv("INTEGRATION_WEBHOOK_SECRET")
+    stripe_secret_key: str | None = os.getenv("STRIPE_SECRET_KEY")
+    stripe_webhook_secret: str | None = os.getenv("STRIPE_WEBHOOK_SECRET")
+    stripe_price_pro: str | None = os.getenv("STRIPE_PRICE_PRO")
+    stripe_price_business: str | None = os.getenv("STRIPE_PRICE_BUSINESS")
 
 
 settings = Settings()

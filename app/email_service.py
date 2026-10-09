@@ -22,10 +22,7 @@ class EmailService:
         return self.config.email_provider == "console" and self.config.app_env != "production"
 
     def send_verification(self, email: str, display_name: str, token: str) -> bool:
-        url = (
-            f"{self.config.public_base_url.rstrip('/')}/login"
-            f"?verify={quote(token)}"
-        )
+        url = f"{self.config.public_base_url.rstrip('/')}/login?verify={quote(token)}"
         return self._send(
             email,
             "Xác minh email ShopPilot AI",
@@ -36,16 +33,30 @@ class EmailService:
         )
 
     def send_password_reset(self, email: str, display_name: str, token: str) -> bool:
-        url = (
-            f"{self.config.public_base_url.rstrip('/')}/login"
-            f"?reset={quote(token)}"
-        )
+        url = f"{self.config.public_base_url.rstrip('/')}/login?reset={quote(token)}"
         return self._send(
             email,
             "Đặt lại mật khẩu ShopPilot AI",
             display_name,
             "Đặt lại mật khẩu",
             "Liên kết này chỉ dùng một lần và sẽ sớm hết hạn.",
+            url,
+        )
+
+    def send_team_invitation(
+        self,
+        email: str,
+        inviter_name: str,
+        shop_name: str,
+        token: str,
+    ) -> bool:
+        url = f"{self.config.public_base_url.rstrip('/')}/login?invite={quote(token)}"
+        return self._send(
+            email,
+            f"Lời mời tham gia {shop_name} trên ShopPilot AI",
+            email,
+            "Chấp nhận lời mời",
+            f"{inviter_name} mời bạn tham gia workspace {shop_name}.",
             url,
         )
 

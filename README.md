@@ -25,6 +25,9 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Human reply copilot:** summarizes the thread and drafts a grounded reply for staff review; it never sends a customer message automatically.
 - **Meta review readiness:** public privacy/terms pages plus a signed user-data deletion callback and status receipt.
 - **Secure shop accounts:** scrypt password hashing, HttpOnly sessions and owner/manager/agent tenant boundaries.
+- **Team workspaces:** expiring email invitations, role management and last-owner protection for every tenant.
+- **Order operations:** staff track confirmed orders through processing, shipping and delivery with carrier codes.
+- **SaaS billing:** Stripe Checkout, Customer Portal and signed subscription webhooks, with a safe Free fallback until Stripe is configured.
 - **Account lifecycle:** optional email verification and one-time password reset links through Resend.
 - **Shared abuse protection:** PostgreSQL-backed limits protect authentication and public chat across instances.
 - **Durable delivery:** webhook jobs survive restarts, retry with backoff and expose a dead-letter state.
@@ -32,7 +35,7 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Human evaluation:** reviewers label conversations as helpful, incorrect or unsafe; metrics aggregate the results.
 - **Commerce connectors:** signed webhooks connect shipping quotes and confirmed orders to real providers.
 - **Meta OAuth onboarding:** owners authorize on Meta, select a Page and store only an encrypted Page token; ShopPilot never receives a Facebook password.
-- **Optional Make bridge:** connects a pilot Messenger Page while direct Meta App access is pending.
+- **Optional Make bridge:** connects a Messenger Page while direct Meta App access is pending.
 - **Embeddable web widget:** add a sales assistant to an existing store with one script tag.
 - **Auditable traces:** records every tool, arguments, result, latency and outcome.
 - **Resilient fallback:** core flows continue when the LLM provider is unavailable.
@@ -140,8 +143,8 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **56 automated tests passed**
-- **10/10 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution workflow and integration readiness.
+- **65 automated tests passed**
+- **13/13 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution, integrations, team access, billing and order operations.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
 - Coverage includes tenant isolation, product grounding, stock guard, explicit confirmation, prompt injection refusal and human handoff.
@@ -155,6 +158,10 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 | `GET` | `/api/shops` | List tenant workspaces |
 | `PATCH` | `/api/shops/{slug}` | Update a managed shop's profile, policy and agent voice |
 | `GET` | `/api/shops/{slug}/products` | Read tenant-scoped catalog |
+| `GET/PATCH` | `/api/shops/{slug}/orders`, `/orders/{id}/fulfillment` | Operate order fulfillment and tracking |
+| `GET/POST/PATCH/DELETE` | `/api/shops/{slug}/team/*` | Invite members and manage tenant roles |
+| `GET/POST` | `/api/shops/{slug}/billing/*` | Read plans, start Stripe Checkout and open Customer Portal |
+| `POST` | `/api/webhooks/stripe` | Verify and apply Stripe subscription events |
 | `POST` | `/api/shops/{slug}/chat` | Run the sales agent |
 | `POST` | `/api/channels/web/{slug}/messages` | Receive a website-widget message |
 | `GET/POST` | `/api/webhooks/meta` | Verify and receive Messenger webhooks |
@@ -193,6 +200,7 @@ app/
 ├── repository.py     # Tenant-scoped data access
 ├── database.py       # SQLite/PostgreSQL schema and transactions
 ├── jobs.py           # Durable webhook/order worker with retry
+├── billing.py        # Stripe Checkout, portal and signed webhook handling
 ├── integrations.py   # Signed shipping and commerce bridges
 ├── email_service.py  # Verification and password recovery delivery
 ├── observability.py  # Request IDs, security headers, logs and metrics
@@ -232,7 +240,7 @@ For a local preview, open <http://127.0.0.1:8000/static/widget.html?shop=mint-fa
 
 Messenger setup: [docs/META_SETUP.md](docs/META_SETUP.md).
 
-Fast Messenger pilot through Make: [docs/MAKE_MESSENGER_SETUP.md](docs/MAKE_MESSENGER_SETUP.md).
+Fast Messenger bridge through Make: [docs/MAKE_MESSENGER_SETUP.md](docs/MAKE_MESSENGER_SETUP.md).
 
 Public review pages are available at `/privacy`, `/terms` and `/data-deletion`.
 

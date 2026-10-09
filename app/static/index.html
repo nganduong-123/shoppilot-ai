@@ -43,6 +43,18 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg></span>
           Catalog <span class="nav-count" id="catalog-count">0</span>
         </button>
+        <button class="nav-item" data-view="orders">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/></svg></span>
+          Orders <span class="nav-count" id="orders-count">0</span>
+        </button>
+        <button class="nav-item" data-view="team">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+          Team <span class="nav-count" id="team-count">0</span>
+        </button>
+        <button class="nav-item" data-view="billing">
+          <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M3 6h18v12H3zM3 10h18M7 15h4"/></svg></span>
+          Billing <span class="nav-count" id="billing-plan">FREE</span>
+        </button>
         <button class="nav-item" data-view="observability">
           <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg></span>
           Traces & metrics
@@ -104,7 +116,7 @@
             <div id="conversation-list" class="conversation-list"></div>
           </aside>
           <section class="thread-panel">
-            <div class="thread-empty" id="thread-empty"><span>✦</span><strong>Chưa chọn hội thoại</strong><p>Gửi thử tin nhắn từ widget website hoặc kết nối Facebook Page.</p><a href="/static/widget.html?shop=mint-fashion" target="_blank">Mở widget thử nghiệm</a></div>
+            <div class="thread-empty" id="thread-empty"><span>✦</span><strong>Chưa chọn hội thoại</strong><p>Gửi tin nhắn từ widget website hoặc kết nối Facebook Page.</p><a href="/static/widget.html?shop=mint-fashion" target="_blank">Mở widget bán hàng</a></div>
             <div id="thread-content" class="thread-content" hidden>
               <header class="thread-head">
                 <div><strong id="thread-customer">Khách hàng</strong><small><span id="thread-channel">Website</span> · <span id="thread-status">AI đang xử lý</span></small></div>
@@ -173,13 +185,57 @@
         <div class="catalog-grid" id="catalog-grid"></div>
       </section>
 
+      <section class="view" id="view-orders">
+        <div class="section-toolbar">
+          <div><p class="section-kicker">ORDER OPERATIONS</p><h2>Quản lý đơn hàng</h2><p>Theo dõi đơn nháp, đơn đã xác nhận và trạng thái giao hàng.</p></div>
+          <button class="text-button" id="refresh-orders">Làm mới</button>
+        </div>
+        <div class="management-summary">
+          <article><span>Tổng đơn</span><strong id="orders-total">0</strong></article>
+          <article><span>Chờ xác nhận</span><strong id="orders-awaiting">0</strong></article>
+          <article><span>Đang xử lý</span><strong id="orders-processing">0</strong></article>
+          <article><span>Đã giao</span><strong id="orders-delivered">0</strong></article>
+        </div>
+        <div class="management-card"><div id="orders-table" class="management-list"></div></div>
+      </section>
+
+      <section class="view" id="view-team">
+        <div class="section-toolbar">
+          <div><p class="section-kicker">ACCESS CONTROL</p><h2>Nhân sự và phân quyền</h2><p>Mời đồng đội và kiểm soát quyền Owner, Manager, Agent.</p></div>
+          <button class="text-button" id="refresh-team">Làm mới</button>
+        </div>
+        <form class="invite-form" id="invite-form">
+          <input name="email" type="email" required placeholder="email@company.com" aria-label="Email nhân viên">
+          <select name="role" aria-label="Vai trò"><option value="agent">Agent</option><option value="manager">Manager</option></select>
+          <button type="submit">Gửi lời mời</button>
+        </form>
+        <div class="management-grid">
+          <div class="management-card"><header><strong>Thành viên</strong><small id="team-role-note"></small></header><div id="team-members" class="management-list"></div></div>
+          <div class="management-card"><header><strong>Lời mời đang chờ</strong><small>Hết hạn sau 7 ngày</small></header><div id="team-invitations" class="management-list"></div></div>
+        </div>
+      </section>
+
+      <section class="view" id="view-billing">
+        <div class="section-toolbar">
+          <div><p class="section-kicker">SUBSCRIPTION</p><h2>Gói dịch vụ và thanh toán</h2><p>Quản lý hạn mức tin nhắn, số thành viên và hóa đơn của workspace.</p></div>
+          <button class="text-button" id="billing-portal" hidden>Quản lý thanh toán</button>
+        </div>
+        <div class="billing-status" id="billing-status">
+          <div><span>Gói hiện tại</span><strong id="billing-current-plan">Free</strong></div>
+          <div><span>Trạng thái</span><strong id="billing-current-status">Đang hoạt động</strong></div>
+          <div><span>Gia hạn</span><strong id="billing-renewal">Không áp dụng</strong></div>
+        </div>
+        <div class="billing-grid" id="billing-plans"></div>
+        <p class="billing-note" id="billing-note"></p>
+      </section>
+
       <section class="view" id="view-observability">
         <div class="observability-hero">
           <div><p class="section-kicker">OBSERVABILITY</p><h2>Mọi quyết định đều có thể kiểm tra</h2><p>Đọc lại hội thoại, tool arguments, kết quả và thời gian xử lý.</p></div>
           <span class="audit-badge">AUDIT READY</span>
         </div>
         <div class="metric-strip large">
-          <article><span>Doanh thu demo</span><strong id="metric-revenue">0đ</strong><small>từ đơn đã xác nhận</small></article>
+          <article><span>Doanh thu ghi nhận</span><strong id="metric-revenue">0đ</strong><small>từ đơn đã xác nhận</small></article>
           <article><span>Handoff</span><strong id="metric-handoffs">0</strong><small>chuyển đúng lúc</small></article>
           <article><span>Sản phẩm</span><strong id="metric-products">0</strong><small>trong catalog hiện tại</small></article>
         </div>
@@ -198,7 +254,7 @@
           <article class="integration-card channel-card">
             <div class="integration-card-head"><span class="integration-logo web-logo">W</span><div><h3>Website widget</h3><p>Nhúng trợ lý vào website hiện có.</p></div><span class="connection-badge connected">Đã bật</span></div>
             <div class="code-block"><code>&lt;script src="/static/widget.js" data-shop="mint-fashion"&gt;&lt;/script&gt;</code></div>
-            <a class="integration-action" href="/static/widget.html?shop=mint-fashion" target="_blank">Mở widget thử nghiệm ↗</a>
+            <a class="integration-action" href="/static/widget.html?shop=mint-fashion" target="_blank">Mở widget bán hàng ↗</a>
           </article>
 
           <article class="integration-card channel-card">
@@ -213,12 +269,12 @@
           </article>
 
           <article class="integration-card roadmap-card">
-            <p class="section-kicker">PILOT CHECKLIST</p>
+            <p class="section-kicker">PRODUCTION CHECKLIST</p>
             <h3>Đường tới bản chạy thật</h3>
             <ol class="setup-steps">
               <li class="done"><span>1</span><div><strong>Lõi omnichannel</strong><small>Inbox, AI/human handoff và chống webhook trùng.</small></div></li>
               <li class="done"><span>2</span><div><strong>Privacy controls</strong><small>Chính sách, điều khoản và callback xóa dữ liệu.</small></div></li>
-              <li><span>3</span><div><strong>Kết nối Page pilot</strong><small>Tạo Meta app, webhook và Page access token.</small></div></li>
+              <li><span>3</span><div><strong>Kết nối Facebook Page</strong><small>Tạo Meta app, webhook và Page access token.</small></div></li>
               <li><span>4</span><div><strong>App Review</strong><small>Quay video, cung cấp tài khoản test và xin Advanced Access.</small></div></li>
             </ol>
           </article>

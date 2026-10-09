@@ -80,6 +80,20 @@ def test_required_auth_scopes_dashboard_to_member_shops(monkeypatch):
     assert other_metrics.status_code == 403
 
 
+def test_optional_auth_still_scopes_an_authenticated_dashboard(monkeypatch):
+    auth_settings = replace(settings, auth_required=False)
+    monkeypatch.setattr(main_module, "settings", auth_settings)
+    monkeypatch.setattr(auth_module, "settings", auth_settings)
+
+    with TestClient(app) as owner_client:
+        owner_client.post("/api/auth/register", json=REGISTER_PAYLOAD)
+        shops = owner_client.get("/api/shops")
+        other_metrics = owner_client.get("/api/shops/mint-fashion/metrics")
+
+    assert [shop["slug"] for shop in shops.json()] == ["cua-hang-test"]
+    assert other_metrics.status_code == 403
+
+
 def test_owner_can_update_shop_profile_but_not_another_tenant(monkeypatch):
     auth_settings = replace(settings, auth_required=True)
     monkeypatch.setattr(main_module, "settings", auth_settings)
