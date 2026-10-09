@@ -32,6 +32,7 @@ flowchart LR
 | `repository.py` | Đọc/ghi dữ liệu, luôn giới hạn theo `shop_id` |
 | `database.py` | Schema và transaction dùng SQLite local hoặc PostgreSQL trên server |
 | `auth.py` | Băm mật khẩu scrypt, tạo phiên đăng nhập HttpOnly và xác thực request |
+| `rate_limit.py` | Giới hạn tần suất đăng nhập và chat công khai theo cửa sổ trượt |
 | `meta_oauth.py` | OAuth state, trao đổi authorization code, chọn Page và đăng ký webhook |
 | `main.py` | HTTP API, validation và phục vụ giao diện |
 | `channels/` | Chuẩn hóa webhook từng nền tảng và gửi phản hồi |
@@ -67,6 +68,12 @@ Background task trong tiến trình phù hợp cho bản demo. Bản production 
 3. `shop_members` gắn người dùng với shop bằng vai trò `owner`, `manager` hoặc `agent`.
 4. Khi `AUTH_REQUIRED=true`, inbox, metrics, catalog write và trace đều kiểm tra membership của đúng shop.
 5. Khách mua hàng vẫn dùng widget hoặc Messenger mà không cần tài khoản ShopPilot.
+
+## Chống lạm dụng
+
+Các route đăng ký/đăng nhập dùng chung một quota theo địa chỉ client; API chat và widget dùng quota riêng. Khi vượt ngưỡng, API trả `429 Too Many Requests` cùng header `Retry-After`, nên giao diện hoặc client biết thời điểm thử lại mà không cần đoán.
+
+Giới hạn có thể cấu hình bằng `AUTH_RATE_LIMIT_*` và `CHAT_RATE_LIMIT_*`. Bản portfolio chạy một web instance nên dùng bộ nhớ trong tiến trình. Khi mở rộng nhiều instance, cần chuyển các cửa sổ đếm sang kho dùng chung như Redis để mọi instance áp dụng cùng một quota.
 
 ## Meta OAuth onboarding
 

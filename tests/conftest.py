@@ -8,11 +8,13 @@ import app.agent as agent_module
 import app.copilot as copilot_module
 import app.database as database_module
 from app.database import init_database
+from app.rate_limit import rate_limiter
 from app.seed import seed_demo_data
 
 
 @pytest.fixture(autouse=True)
 def isolated_database(tmp_path, monkeypatch):
+    rate_limiter.reset()
     db_path = tmp_path / "test.db"
     monkeypatch.setattr(
         database_module,
@@ -29,3 +31,4 @@ def isolated_database(tmp_path, monkeypatch):
     init_database(db_path)
     seed_demo_data()
     yield
+    rate_limiter.reset()

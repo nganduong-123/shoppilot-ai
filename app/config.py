@@ -21,12 +21,21 @@ def env_bool(name: str, default: bool = False) -> bool:
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "ShopPilot AI"
-    app_version: str = "0.8.2"
+    app_version: str = "0.9.0"
     app_env: str = os.getenv("APP_ENV", "development")
     database_path: Path = BASE_DIR / os.getenv("DATABASE_PATH", "data/shoppilot.db")
     database_url: str | None = os.getenv("DATABASE_URL")
     auth_required: bool = env_bool("AUTH_REQUIRED", False)
     registration_enabled: bool = env_bool("REGISTRATION_ENABLED", True)
+    rate_limit_enabled: bool = env_bool("RATE_LIMIT_ENABLED", True)
+    auth_rate_limit_requests: int = int(os.getenv("AUTH_RATE_LIMIT_REQUESTS", "10"))
+    auth_rate_limit_window_seconds: int = int(
+        os.getenv("AUTH_RATE_LIMIT_WINDOW_SECONDS", "300")
+    )
+    chat_rate_limit_requests: int = int(os.getenv("CHAT_RATE_LIMIT_REQUESTS", "60"))
+    chat_rate_limit_window_seconds: int = int(
+        os.getenv("CHAT_RATE_LIMIT_WINDOW_SECONDS", "60")
+    )
     session_cookie_name: str = os.getenv("SESSION_COOKIE_NAME", "shoppilot_session")
     session_days: int = int(os.getenv("SESSION_DAYS", "14"))
     token_encryption_key: str | None = os.getenv("TOKEN_ENCRYPTION_KEY")

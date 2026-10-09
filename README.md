@@ -25,6 +25,7 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Human reply copilot:** summarizes the thread and drafts a grounded reply for staff review; it never sends a customer message automatically.
 - **Meta review readiness:** public privacy/terms pages plus a signed user-data deletion callback and status receipt.
 - **Secure shop accounts:** scrypt password hashing, HttpOnly sessions and owner/manager/agent tenant boundaries.
+- **Abuse protection:** configurable sliding-window limits protect authentication and public chat endpoints.
 - **Meta OAuth onboarding:** owners authorize on Meta, select a Page and store only an encrypted Page token; ShopPilot never receives a Facebook password.
 - **Optional Make bridge:** connects a pilot Messenger Page while direct Meta App access is pending.
 - **Embeddable web widget:** add a sales assistant to an existing store with one script tag.
@@ -124,7 +125,7 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **37 automated tests passed**
+- **42 automated tests passed**
 - **10/10 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution workflow and integration readiness.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
@@ -191,7 +192,7 @@ docs/                 # Architecture and interview learning material
 
 ## Current limitations
 
-This repository is a portfolio MVP. Catalog, shipping rules and order fulfillment are simulated. Account sessions, tenant roles, PostgreSQL and encrypted Meta OAuth onboarding are implemented. A production version would additionally add email verification/password recovery, rate limiting, a durable job queue, real commerce/transport adapters, online evaluation with human labels, production monitoring and Meta Advanced Access approval for public users outside the app's roles.
+This repository is a portfolio MVP. Catalog, shipping rules and order fulfillment are simulated. Account sessions, tenant roles, PostgreSQL, encrypted Meta OAuth onboarding and single-instance rate limiting are implemented. A production version would additionally add email verification/password recovery, a shared rate-limit store, a durable job queue, real commerce/transport adapters, online evaluation with human labels, production monitoring and Meta Advanced Access approval for public users outside the app's roles.
 
 ## Embed the website widget
 

@@ -24,6 +24,7 @@ from app.copilot import inbox_copilot
 from app.database import init_database, is_integrity_error, using_postgres
 from app.inbox import inbox_service
 from app.meta_oauth import meta_oauth_service
+from app.rate_limit import enforce_rate_limit
 from app.repository import repository
 from app.schemas import (
     BotControlRequest,
@@ -111,7 +112,14 @@ def auth_me(request: Request) -> dict:
 
 
 @app.post("/api/auth/register", status_code=201)
-def register_account(payload: RegisterRequest, response: Response) -> dict:
+def register_account(payload: RegisterRequest, request: Request, response: Response) -> dict:
+    enforce_rate_limit(
+        request,
+        "auth",
+        settings.auth_rate_limit_requests,
+        settings.auth_rate_limit_window_seconds,
+        enabled=settings.rate_limit_enabled,
+    )
     if not settings.registration_enabled:
         raise HTTPException(status_code=403, detail="Đăng ký tài khoản đang tạm đóng.")
     try:
@@ -131,7 +139,14 @@ def register_account(payload: RegisterRequest, response: Response) -> dict:
 
 
 @app.post("/api/auth/login")
-def login_account(payload: LoginRequest, response: Response) -> dict:
+def login_account(payload: LoginRequest, request: Request, response: Response) -> dict:
+    enforce_rate_limit(
+        request,
+        "auth",
+        settings.auth_rate_limit_requests,
+        settings.auth_rate_limit_window_seconds,
+        enabled=settings.rate_limit_enabled,
+    )
     result = auth_service.login(payload.email, payload.password)
     if not result:
         raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng.")
@@ -158,6 +173,7 @@ def health() -> dict:
         "llm_configured": bool(settings.groq_api_key),
         "model": settings.groq_model if settings.groq_api_key else "rule-fallback",
         "storage": "postgresql" if using_postgres() else "sqlite",
+        "rate_limiting": settings.rate_limit_enabled,
         "channels": {
             "web": True,
             "messenger": direct_messenger or make_messenger,
@@ -387,13 +403,27 @@ async def import_products(slug: str, request: Request, file: UploadFile = File(.
 
 
 @app.post("/api/shops/{slug}/chat", response_model=ChatResponse)
-async def chat(slug: str, payload: ChatRequest) -> dict:
+async def chat(slug: str, payload: ChatRequest, request: Request) -> dict:
+    enforce_rate_limit(
+        request,
+        "chat",
+        settings.chat_rate_limit_requests,
+        settings.chat_rate_limit_window_seconds,
+        enabled=settings.rate_limit_enabled,
+    )
     shop = require_shop(slug)
     return await sales_agent.respond(shop, payload.message.strip(), payload.conversation_id)
 
 
 @app.post("/api/channels/web/{slug}/messages")
-async def web_channel_message(slug: str, payload: WebChannelMessage) -> dict:
+async def web_channel_message(slug: str, payload: WebChannelMessage, request: Request) -> dict:
+    enforce_rate_limit(
+        request,
+        "chat",
+        settings.chat_rate_limit_requests,
+        settings.chat_rate_limit_window_seconds,
+        enabled=settings.rate_limit_enabled,
+    )
     shop = require_shop(slug)
     external_conversation_id = payload.conversation_id or str(uuid4())
     customer_id = payload.customer_id or f"web:{external_conversation_id}"

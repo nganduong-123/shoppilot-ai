@@ -23,6 +23,16 @@ services:
         value: "true"
       - key: REGISTRATION_ENABLED
         value: "true"
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: AUTH_RATE_LIMIT_REQUESTS
+        value: "10"
+      - key: AUTH_RATE_LIMIT_WINDOW_SECONDS
+        value: "300"
+      - key: CHAT_RATE_LIMIT_REQUESTS
+        value: "60"
+      - key: CHAT_RATE_LIMIT_WINDOW_SECONDS
+        value: "60"
       - key: TOKEN_ENCRYPTION_KEY
         generateValue: true
       - key: GROQ_API_KEY
