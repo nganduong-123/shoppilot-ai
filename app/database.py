@@ -317,6 +317,47 @@ CREATE TABLE IF NOT EXISTS shop_ai_usage (
     PRIMARY KEY(shop_id, period)
 );
 
+CREATE TABLE IF NOT EXISTS platform_admins (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    granted_at TEXT NOT NULL,
+    reason TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS platform_audit (
+    id TEXT PRIMARY KEY,
+    actor_id TEXT NOT NULL REFERENCES users(id),
+    action TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS shop_plan_trials (
+    shop_id INTEGER PRIMARY KEY REFERENCES shops(id) ON DELETE CASCADE,
+    plan TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    granted_by TEXT NOT NULL REFERENCES users(id),
+    reason TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stripe_event_receipts (
+    event_id TEXT PRIMARY KEY,
+    shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS billing_revisions (
+    shop_id INTEGER PRIMARY KEY REFERENCES shops(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS billing_subscription_bindings (
+    shop_id INTEGER PRIMARY KEY REFERENCES shops(id) ON DELETE CASCADE,
+    subscription_id TEXT NOT NULL,
+    started_at INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_conversation ON tool_calls(conversation_id);

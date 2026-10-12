@@ -5,6 +5,10 @@ import os from "node:os";
 import path from "node:path";
 
 const base = process.env.SHOPPILOT_URL || "http://127.0.0.1:8000";
+const testAdmin = process.env.SHOPPILOT_TEST_ADMIN === "true";
+if (testAdmin && !["localhost", "127.0.0.1"].includes(new URL(base).hostname)) {
+  throw new Error("Platform fixtures are restricted to a local test server");
+}
 const chromePath = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const shop = "mint-fashion";
 const timeoutMs = 45_000;
@@ -302,6 +306,25 @@ try {
     "product archived without removing history",
   );
 
+  const platformChecks = [];
+  if (testAdmin) {
+    const forbidden = await client.evaluate(`fetch('/api/admin/overview').then(r=>r.status)`);
+    if (forbidden !== 403) throw new Error('Tenant owner unexpectedly has platform access');
+    platformChecks.push('platform_owner_access_denied');
+    await client.evaluate(`fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email:'e2e-platform@example.com',password:'e2e-platform-test-password'})}).then(r=>{if(!r.ok)throw new Error('Fixture login failed')})`);
+    await client.navigate(`${base}/admin`, '#overview');
+    await waitFor(() => client.evaluate(`document.querySelectorAll('#overview article').length===5 && document.querySelectorAll('#admin-users tr').length>=2 && document.querySelector('#admin-error').hidden`), 'platform overview and account list');
+    platformChecks.push('platform_overview_and_accounts');
+    await client.evaluate(`window.prompt=()=> 'Disposable E2E trial approval';document.querySelector('[data-trial]').click()`);
+    await waitFor(() => client.evaluate(`document.querySelector('#admin-audit').textContent.includes('shop.trial.pro')`), 'trial action and audit');
+    platformChecks.push('platform_trial_and_audit');
+    await client.evaluate(`window.prompt=()=> 'Disposable E2E suspension';document.querySelector('[data-user][data-status="suspended"]').click()`);
+    await waitFor(() => client.evaluate(`!!document.querySelector('[data-user][data-status="active"]') && document.querySelector('#admin-audit').textContent.includes('user.suspended')`), 'account suspension and audit');
+    await client.evaluate(`window.prompt=()=> 'Disposable E2E restore access';document.querySelector('[data-user][data-status="active"]').click()`);
+    await waitFor(() => client.evaluate(`document.querySelector('#admin-audit').textContent.includes('user.active')`), 'account access restored');
+    platformChecks.push('platform_suspend_restore');
+  }
   console.log(JSON.stringify({
     passed: true,
     version: health.version,
@@ -323,6 +346,7 @@ try {
       "catalog_create_edit_archive",
       "catalog_validation_retry",
       "shop_profile_and_policy",
+      ...platformChecks,
     ],
   }, null, 2));
   client.socket.close();

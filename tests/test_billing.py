@@ -112,6 +112,12 @@ def test_signed_checkout_webhook_activates_shop_subscription(monkeypatch):
     with TestClient(app) as client:
         client.post("/api/auth/register", json=ACCOUNT)
         shop = repository.get_shop("billing-shop")
+        monkeypatch.setattr(billing_module.httpx, "get", lambda *args, **kwargs:
+                            SimpleNamespace(raise_for_status=lambda: None, json=lambda: {
+                                "id": "sub_test", "created": 1700000000, "customer": "cus_test",
+                                "status": "active", "metadata": {"shop_id": str(shop["id"])},
+                                "items": {"data": [{"price": {"id": "price_pro"}}]},
+                            }))
         event = {
             "id": "evt_checkout",
             "type": "checkout.session.completed",

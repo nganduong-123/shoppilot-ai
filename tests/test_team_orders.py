@@ -28,6 +28,9 @@ AGENT = {
 def test_owner_can_invite_member_and_member_accepts_only_with_matching_email():
     with TestClient(app) as owner_client:
         owner_client.post("/api/auth/register", json=OWNER)
+        shop = repository.get_shop("team-shop")
+        repository.upsert_shop_subscription(shop_id=shop["id"], plan="pro", status="active",
+                                           customer_id=None, subscription_id=None)
         invited = owner_client.post(
             "/api/shops/team-shop/team/invitations",
             json={"email": AGENT["email"], "role": "agent"},
@@ -73,6 +76,9 @@ def test_owner_can_invite_member_and_member_accepts_only_with_matching_email():
 def test_invitation_cannot_be_accepted_by_a_different_email():
     with TestClient(app) as owner_client:
         owner_client.post("/api/auth/register", json=OWNER)
+        shop = repository.get_shop("team-shop")
+        repository.upsert_shop_subscription(shop_id=shop["id"], plan="pro", status="active",
+                                           customer_id=None, subscription_id=None)
         invited = owner_client.post(
             "/api/shops/team-shop/team/invitations",
             json={"email": "expected@example.com", "role": "agent"},

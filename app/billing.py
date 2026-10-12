@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -11,12 +12,6 @@ import httpx
 
 from app.config import Settings, settings
 from app.repository import Repository, repository
-
-PLANS = {
-    "free": {"name": "Free", "monthly_messages": 500, "seats": 1},
-    "pro": {"name": "Pro", "monthly_messages": 10000, "seats": 5},
-    "business": {"name": "Business", "monthly_messages": 50000, "seats": 20},
-}
 
 
 class StripeBillingService:
@@ -45,6 +40,11 @@ class StripeBillingService:
         return None
 
     def create_checkout(self, *, shop: dict[str, Any], user: dict[str, Any], plan: str) -> str:
+        existing = self.repo.get_shop_subscription(shop["id"])
+        if existing.get("stripe_subscription_id") and existing["status"] in {
+            "active", "trialing", "past_due", "unpaid", "paused", "incomplete",
+        }:
+            raise ValueError("Workspace đã có subscription. Đổi gói trong cổng quản lý thanh toán.")
         price_id = self.price_id(plan)
         if not self.config.stripe_secret_key or not price_id:
             raise RuntimeError("Gói thanh toán này chưa được cấu hình trên Stripe.")
@@ -107,45 +107,83 @@ class StripeBillingService:
         return any(hmac.compare_digest(expected, item) for item in values.get("v1", []))
 
     def apply_event(self, event: dict[str, Any]) -> bool:
+        if not self.configured:
+            raise RuntimeError("Stripe is not fully configured")
         event_type = event.get("type", "")
-        obj = event.get("data", {}).get("object", {})
-        if event_type == "checkout.session.completed":
-            metadata = obj.get("metadata") or {}
-            shop_id = metadata.get("shop_id")
-            if not shop_id:
-                return False
-            self.repo.upsert_shop_subscription(
-                shop_id=int(shop_id),
-                plan=metadata.get("plan", "pro"),
-                status="active",
-                customer_id=obj.get("customer"),
-                subscription_id=obj.get("subscription"),
-            )
-            return True
         if event_type not in {
+            "checkout.session.completed", "checkout.session.async_payment_succeeded",
+            "checkout.session.async_payment_failed",
             "customer.subscription.created",
             "customer.subscription.updated",
             "customer.subscription.deleted",
         }:
             return False
+        event_id = event.get("id")
+        data = event.get("data")
+        if not isinstance(data, dict):
+            raise TypeError("Invalid event data")
+        obj = data.get("object")
+        if not isinstance(event_id, str) or not re.fullmatch(r"evt_[A-Za-z0-9_]{1,200}", event_id):
+            raise ValueError("Invalid event ID")
+        if not isinstance(obj, dict):
+            raise TypeError("Invalid event object")
+        subscription_id = obj.get("subscription") if event_type.startswith("checkout.") else obj.get("id")
+        if event_type.startswith("checkout.") and not subscription_id:
+            return False  # A payment-mode Checkout does not grant SaaS entitlements.
+        if not isinstance(subscription_id, str) or not re.fullmatch(r"sub_[A-Za-z0-9_]{1,200}", subscription_id):
+            raise ValueError("Invalid subscription ID")
         metadata = obj.get("metadata") or {}
-        existing = self.repo.get_subscription_by_provider_id(str(obj.get("id", "")))
+        if not isinstance(metadata, dict):
+            raise TypeError("Invalid subscription metadata")
+        existing = self.repo.get_subscription_by_provider_id(subscription_id)
         shop_id = metadata.get("shop_id") or (existing and existing["shop_id"])
         if not shop_id:
             return False
-        period_end = obj.get("current_period_end")
-        period_end_iso = (
-            datetime.fromtimestamp(int(period_end), UTC).isoformat() if period_end else None
+        shop_id = int(shop_id)
+        if not self.repo.get_shop_by_id(shop_id):
+            raise ValueError("Unknown billing workspace")
+        revision = self.repo.begin_billing_refresh(shop_id, event_id)
+        if revision is None:
+            return False
+        # Event snapshots can arrive out of order. Fetch the canonical subscription,
+        # then commit only if no newer refresh has started for this workspace.
+        response = httpx.get(
+            f"https://api.stripe.com/v1/subscriptions/{subscription_id}",
+            auth=(self.config.stripe_secret_key, ""), timeout=10,
         )
-        self.repo.upsert_shop_subscription(
-            shop_id=int(shop_id),
-            plan=metadata.get("plan") or (existing and existing["plan"]) or "pro",
-            status="canceled" if event_type.endswith("deleted") else obj.get("status", "active"),
-            customer_id=obj.get("customer"),
-            subscription_id=obj.get("id"),
-            current_period_end=period_end_iso,
+        response.raise_for_status()
+        canonical = response.json()
+        if not isinstance(canonical, dict) or canonical.get("id") != subscription_id:
+            raise ValueError("Invalid canonical subscription")
+        canonical_metadata = canonical.get("metadata") or {}
+        if not isinstance(canonical_metadata, dict) or str(canonical_metadata.get("shop_id")) != str(shop_id):
+            raise ValueError("Subscription ownership does not match")
+        container = canonical.get("items")
+        if not isinstance(container, dict):
+            raise TypeError("Invalid subscription items")
+        items = container.get("data", [])
+        if not isinstance(items, list) or len(items) != 1:
+            raise ValueError("Subscription must have exactly one ShopPilot plan")
+        if not isinstance(items[0], dict) or not isinstance(items[0].get("price"), dict):
+            raise TypeError("Invalid subscription price")
+        price_id = items[0]["price"].get("id")
+        plan = next((name for name in ("pro", "business") if self.price_id(name) == price_id), None)
+        if plan is None:
+            raise ValueError("Unknown ShopPilot price")
+        status = canonical.get("status")
+        if status not in {"active", "trialing", "past_due", "unpaid", "paused",
+                          "incomplete", "incomplete_expired", "canceled"}:
+            raise ValueError("Invalid subscription status")
+        period_end = canonical.get("current_period_end") or items[0].get("current_period_end")
+        snapshot = {
+            "id": subscription_id, "created": int(canonical["created"]), "plan": plan,
+            "status": status, "customer": canonical["customer"],
+            "current_period_end": datetime.fromtimestamp(int(period_end), UTC).isoformat()
+            if period_end else None,
+        }
+        return self.repo.apply_billing_refresh(
+            shop_id, event_id, event_type, revision, snapshot,
         )
-        return True
 
 
 billing_service = StripeBillingService()

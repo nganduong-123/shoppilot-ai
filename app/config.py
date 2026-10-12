@@ -20,7 +20,7 @@ def env_bool(name: str, default: bool = False) -> bool:
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "ShopPilot AI"
-    app_version: str = "1.2.0"
+    app_version: str = "1.3.0"
     app_env: str = os.getenv("APP_ENV", "development")
     seed_demo_data: bool = env_bool("SEED_DEMO_DATA", os.getenv("APP_ENV") != "production")
     llm_turn_timeout_seconds: int = int(os.getenv("LLM_TURN_TIMEOUT_SECONDS", "30"))

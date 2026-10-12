@@ -67,11 +67,33 @@ Before inviting actual customers:
    delivery receipt. Keep tokens and customer screenshots out of public evidence.
 5. Exercise provider timeout/retry, a restart and the expected simultaneous-user load
    in a staging environment. This release's tests are not a load/SLA guarantee.
-6. Do not enable paid plans until seat enforcement, stale/out-of-order billing-event
-   handling and operator support controls have their own release gate.
+6. Do not enable paid plans until a real Stripe test-mode checkout, cancellation,
+   portal plan change and duplicate/out-of-order webhook delivery have been exercised
+   with the configured prices. Mocked provider tests do not prove payment activation.
+   Test repeated Checkout clicks as well; UI prevention alone does not eliminate
+   independently created parallel Checkout sessions.
 
-The platform currently provides tenant owners/managers/agents, not a global
-administrator console. No public-launch sign-off should imply that console exists.
+## Platform operator console
+
+`/admin` and every `/api/admin/*` route require an explicit platform administrator
+grant. Owning a shop, public signup or sending a role field does not provide this
+permission. The console lists account/shop metadata and aggregate usage, not
+customer message bodies, password hashes or provider credentials. It can suspend
+non-admin accounts (revoking all their sessions), restore access, grant a 1–30 day
+Pro/Business trial, and requeue supported failed jobs. Each mutation requires a
+reason and writes an audit event in the same transaction. Admin accounts cannot
+be suspended through this UI.
+
+Bootstrap only a verified, existing active operator through trusted database access:
+
+```powershell
+python -m scripts.grant_platform_admin --email operator@example.com --reason "Verified platform owner" --grant-platform-admin --database-url-stdin
+```
+
+Supply the DSN through standard input or the operator environment, never through
+CLI arguments, Git, screenshots or logs. Keep grants restricted to trusted platform
+operators; no public grant endpoint exists. Test the console with the disposable
+`scripts.seed_e2e_admin` fixture only on an offline local development test database.
 
 ## AI usage and fallback
 
@@ -84,8 +106,22 @@ available after quota exhaustion, and human replies do not use this budget.
 
 Exhaustion pauses AI for that channel conversation and hands off to staff. At a new
 month or after a valid plan upgrade, staff can re-enable AI in the inbox. Canceled,
-unpaid or unknown plans use Free limits. Seat counts are explicitly marked as
-provisional; there is no implemented seat limit yet.
+unpaid or unknown plans use Free limits, except for a valid operator trial. An
+unexpired operator trial can upgrade but never downgrade a paid plan. Trials end
+automatically at their stored UTC expiry.
+
+Free permits 1 member, Pro 5 and Business 20. Members and unexpired pending invites
+both reserve seats; replacing the same pending invitation does not reserve twice.
+Shop-scoped transaction locks protect concurrent invitations, acceptance and
+last-owner changes. On downgrade, existing members are not silently removed, but
+new invitations/acceptance are blocked when the new limit is reached.
+
+Signed subscription events fetch Stripe's current resource rather than trusting a
+potentially stale event snapshot. Receipt IDs deduplicate delivery, refresh revisions
+fence concurrent HTTP snapshots, and subscription bindings prevent an older
+subscription from replacing a newer one. Provider failures return a retryable error;
+no successful receipt is stored until the update commits. See
+https://docs.stripe.com/webhooks and https://docs.stripe.com/api/subscriptions/retrieve.
 
 Model generation has a 30-second total turn budget and a grounded fallback. Jobs
 have a 90-second processing timeout and shutdown waits at most 10 seconds before
@@ -95,7 +131,7 @@ Readiness returns 503 for failed database access or a dead worker, and reports
 
 ## Queue recovery
 
-Messenger and confirmed-order deliveries are persisted in `jobs`. A worker retries failures with backoff. A job that exhausts its attempts moves to `failed` and remains visible in health/metrics. Diagnose the provider/credential first, then create a fresh delivery event or requeue the job through an approved operations procedure; do not edit customer messages or order payloads to hide the failure.
+Messenger and confirmed-order deliveries are persisted in `jobs`. A worker retries failures with backoff. A job that exhausts its attempts moves to `failed` and remains visible in health/metrics. Diagnose the provider/credential first, then use the platform console's audited retry; do not edit customer messages or order payloads to hide the failure.
 
 Running jobs older than five minutes are checked every minute and returned to
 `queued`. Polling failures do not permanently kill the worker. Provider event IDs

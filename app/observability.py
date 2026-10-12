@@ -87,6 +87,7 @@ class RequestObservabilityMiddleware(BaseHTTPMiddleware):
         try:
             protected_write = request.method not in {"GET", "HEAD", "OPTIONS"} and (
                 request.url.path.startswith("/api/auth/")
+                or request.url.path.startswith("/api/admin/")
                 or request.url.path.startswith("/api/invitations/")
                 or request.url.path.startswith("/api/shops/")
             )

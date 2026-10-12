@@ -14,6 +14,7 @@ from app.database import (
     row_to_dict,
     utc_now,
 )
+from app.plans import PLANS, effective_plan
 
 
 def _hydrate_product(row: Any) -> dict[str, Any]:
@@ -43,6 +44,28 @@ BUYING_SIGNALS = (
     "mua", "chốt", "đặt", "lấy", "còn hàng", "còn size", "giá bao nhiêu",
     "phí ship", "giao hàng", "thanh toán", "tư vấn",
 )
+
+
+class SeatLimitReached(ValueError):
+    pass
+
+
+def _seat_limits(connection: Any, shop_id: int, now: str) -> dict:
+    subscription = connection.execute(
+        "SELECT plan, status FROM shop_subscriptions WHERE shop_id = ?", (shop_id,),
+    ).fetchone()
+    trial = connection.execute(
+        "SELECT plan FROM shop_plan_trials WHERE shop_id = ? AND expires_at > ?", (shop_id, now),
+    ).fetchone()
+    plan = effective_plan(dict(subscription) if subscription else {}, dict(trial) if trial else None)
+    members = connection.execute("SELECT COUNT(*) FROM shop_members WHERE shop_id = ?",
+                                 (shop_id,)).fetchone()[0]
+    pending = connection.execute(
+        "SELECT COUNT(*) FROM shop_invitations WHERE shop_id = ? "
+        "AND accepted_at IS NULL AND expires_at > ?", (shop_id, now),
+    ).fetchone()[0]
+    return {"plan": plan, "limit": PLANS[plan]["seats"], "members": members, "pending": pending,
+            "remaining": max(0, PLANS[plan]["seats"] - members - pending)}
 
 
 def _inbox_attention(item: dict[str, Any]) -> dict[str, Any]:
@@ -97,6 +120,39 @@ def _inbox_sort_key(item: dict[str, Any]) -> tuple[int, float]:
 
 
 class Repository:
+    def is_platform_admin(self, user_id: str) -> bool:
+        with db_session() as connection:
+            return bool(connection.execute(
+                "SELECT 1 FROM platform_admins a JOIN users u ON u.id = a.user_id "
+                "WHERE a.user_id = ? AND u.status = 'active'", (user_id,),
+            ).fetchone())
+
+    def grant_platform_admin(self, email: str, reason: str) -> str:
+        with db_session() as connection:
+            user = connection.execute(
+                "SELECT u.id FROM users u JOIN user_email_status v ON v.user_id = u.id "
+                "WHERE u.email = ? AND u.status = 'active'", (email.strip().casefold(),),
+            ).fetchone()
+            if not user:
+                raise ValueError("Existing active verified account is required")
+            connection.execute(
+                "INSERT INTO platform_admins (user_id, granted_at, reason) VALUES (?, ?, ?) "
+                "ON CONFLICT(user_id) DO NOTHING", (user["id"], utc_now(), reason),
+            )
+            connection.execute(
+                "INSERT INTO platform_audit (id, actor_id, action, target_id, reason, created_at) "
+                "VALUES (?, ?, 'operator.grant_admin', ?, ?, ?)",
+                (str(uuid4()), user["id"], user["id"], reason, utc_now()),
+            )
+            return user["id"]
+
+    def seat_limits(self, shop_id: int) -> dict:
+        with db_session() as connection:
+            return _seat_limits(connection, shop_id, utc_now())
+
+    def effective_plan(self, shop_id: int) -> str:
+        return self.seat_limits(shop_id)["plan"]
+
     def create_user_with_shop(
         self,
         *,
@@ -346,6 +402,7 @@ class Repository:
         invitation_id = str(uuid4())
         now = utc_now()
         with db_session() as connection:
+            connection.execute("UPDATE shops SET slug = slug WHERE id = ?", (shop_id,))
             existing_member = connection.execute(
                 """
                 SELECT 1 FROM shop_members sm
@@ -356,6 +413,13 @@ class Repository:
             ).fetchone()
             if existing_member:
                 raise ValueError("User is already a member")
+            renewing = connection.execute(
+                "SELECT 1 FROM shop_invitations WHERE shop_id = ? AND email = ? "
+                "AND accepted_at IS NULL AND expires_at > ?", (shop_id, email, now),
+            ).fetchone()
+            seats = _seat_limits(connection, shop_id, now)
+            if seats["members"] + seats["pending"] - int(bool(renewing)) >= seats["limit"]:
+                raise SeatLimitReached("Workspace member limit reached")
             connection.execute(
                 """
                 DELETE FROM shop_invitations
@@ -407,6 +471,17 @@ class Repository:
             ).fetchone()
             if not invitation or not user or user["email"] != invitation["email"]:
                 return None
+            connection.execute("UPDATE shops SET slug = slug WHERE id = ?", (invitation["shop_id"],))
+            member = connection.execute(
+                "SELECT 1 FROM shop_members WHERE shop_id = ? AND user_id = ?",
+                (invitation["shop_id"], user_id),
+            ).fetchone()
+            if member:
+                # An old invitation must not demote an existing Owner.
+                return None
+            seats = _seat_limits(connection, invitation["shop_id"], now)
+            if seats["members"] >= seats["limit"]:
+                raise SeatLimitReached("Workspace member limit reached")
             updated = connection.execute(
                 """
                 UPDATE shop_invitations SET accepted_at = ?
@@ -444,6 +519,7 @@ class Repository:
         self, shop_id: int, user_id: str, role: str
     ) -> dict[str, Any] | None:
         with db_session() as connection:
+            connection.execute("UPDATE shops SET slug = slug WHERE id = ?", (shop_id,))
             member = connection.execute(
                 "SELECT role FROM shop_members WHERE shop_id = ? AND user_id = ?",
                 (shop_id, user_id),
@@ -474,6 +550,7 @@ class Repository:
 
     def remove_shop_member(self, shop_id: int, user_id: str) -> bool:
         with db_session() as connection:
+            connection.execute("UPDATE shops SET slug = slug WHERE id = ?", (shop_id,))
             member = connection.execute(
                 "SELECT role FROM shop_members WHERE shop_id = ? AND user_id = ?",
                 (shop_id, user_id),
@@ -868,6 +945,56 @@ class Repository:
                 (subscription_id,),
             ).fetchone()
             return row_to_dict(row)
+
+    def begin_billing_refresh(self, shop_id: int, event_id: str) -> int | None:
+        with db_session() as connection:
+            connection.execute("UPDATE shops SET slug = slug WHERE id = ?", (shop_id,))
+            if connection.execute("SELECT 1 FROM stripe_event_receipts WHERE event_id = ?",
+                                  (event_id,)).fetchone():
+                return None
+            row = connection.execute(
+                "INSERT INTO billing_revisions (shop_id, revision) VALUES (?, 1) "
+                "ON CONFLICT(shop_id) DO UPDATE SET revision = billing_revisions.revision + 1 "
+                "RETURNING revision", (shop_id,),
+            ).fetchone()
+            return row["revision"]
+
+    def apply_billing_refresh(self, shop_id: int, event_id: str, event_type: str,
+                              revision: int, subscription: dict) -> bool:
+        with db_session() as connection:
+            connection.execute("UPDATE shops SET slug = slug WHERE id = ?", (shop_id,))
+            if connection.execute("SELECT 1 FROM stripe_event_receipts WHERE event_id = ?",
+                                  (event_id,)).fetchone():
+                return False
+            latest = connection.execute("SELECT revision FROM billing_revisions WHERE shop_id = ?",
+                                         (shop_id,)).fetchone()
+            if not latest or latest["revision"] != revision:
+                raise RuntimeError("A newer subscription refresh is in progress; retry this event")
+            binding = connection.execute("SELECT * FROM billing_subscription_bindings WHERE shop_id = ?",
+                                          (shop_id,)).fetchone()
+            outdated = bool(binding and binding["subscription_id"] != subscription["id"]
+                            and binding["started_at"] >= subscription["created"])
+            if not outdated:
+                connection.execute("""
+                    INSERT INTO shop_subscriptions (shop_id, plan, status, stripe_customer_id,
+                        stripe_subscription_id, current_period_end, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(shop_id) DO UPDATE SET
+                        plan = excluded.plan, status = excluded.status,
+                        stripe_customer_id = excluded.stripe_customer_id,
+                        stripe_subscription_id = excluded.stripe_subscription_id,
+                        current_period_end = excluded.current_period_end, updated_at = excluded.updated_at
+                """, (shop_id, subscription["plan"], subscription["status"], subscription["customer"],
+                      subscription["id"], subscription["current_period_end"], utc_now()))
+                connection.execute("""
+                    INSERT INTO billing_subscription_bindings (shop_id, subscription_id, started_at)
+                    VALUES (?, ?, ?) ON CONFLICT(shop_id) DO UPDATE SET
+                        subscription_id = excluded.subscription_id, started_at = excluded.started_at
+                """, (shop_id, subscription["id"], subscription["created"]))
+            connection.execute(
+                "INSERT INTO stripe_event_receipts (event_id, shop_id, event_type, applied_at) "
+                "VALUES (?, ?, ?, ?)", (event_id, shop_id, event_type, utc_now()),
+            )
+            return not outdated
 
     def upsert_shop_subscription(
         self,

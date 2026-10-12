@@ -43,6 +43,7 @@ jobs:
         if: matrix.database == 'sqlite'
         env:
           CHROME_PATH: /usr/bin/google-chrome
+          SHOPPILOT_TEST_ADMIN: "true"
         run: |
           docker build -t shoppilot-ci .
           docker run -d --name shoppilot-ci -p 127.0.0.1:8000:8000 shoppilot-ci
@@ -51,6 +52,7 @@ jobs:
             sleep 2
           done
           curl --fail http://127.0.0.1:8000/api/health/ready
+          docker exec -e SHOPPILOT_TEST_ADMIN=true shoppilot-ci python -m scripts.seed_e2e_admin
           node scripts/e2e_browser.mjs
       - name: Container diagnostics
         if: failure() && matrix.database == 'sqlite'

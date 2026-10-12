@@ -2,7 +2,8 @@
 
 **Auditable multi-tenant sales and support platform for online shops.**
 
-Release 1.2.0 hardens the core flows for a controlled pilot. Public customer launch
+Release 1.3.0 adds separate platform operations, enforced team seats and resilient
+subscription event handling to the controlled pilot. Public customer launch
 still requires the infrastructure and provider gates in the production runbook;
 passing automated tests is not a substitute for those gates.
 
@@ -29,11 +30,12 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Human reply copilot:** summarizes the thread and drafts a grounded reply for staff review; it never sends a customer message automatically.
 - **Meta review readiness:** public privacy/terms pages plus a signed user-data deletion callback and status receipt.
 - **Secure shop accounts:** scrypt password hashing, HttpOnly sessions and owner/manager/agent tenant boundaries.
-- **Team workspaces:** expiring email invitations, role management and last-owner protection for every tenant.
+- **Team workspaces:** expiring email invitations, role management, atomic seat reservations and last-owner protection for every tenant.
+- **Platform administration:** a separately authorized console for accounts, shops, temporary trials, failed-job recovery and audited support actions; tenant owners cannot grant themselves platform access.
 - **Shop setup:** owners/managers edit products, inventory and real store policies in the console; agents cannot change the catalog.
 - **Monthly AI budget:** shared, atomic per-shop quotas cover chat and staff copilot; exhaustion hands off to a human without another model call.
 - **Order operations:** staff track confirmed orders through processing, shipping and delivery with carrier codes.
-- **SaaS billing:** Stripe Checkout, Customer Portal and signed subscription webhooks, with a safe Free fallback until Stripe is configured.
+- **SaaS billing:** Stripe Checkout, Customer Portal and signed subscription webhooks with duplicate receipts and canonical subscription refresh fencing; a safe Free fallback remains until Stripe is configured and its test-mode gate is passed.
 - **Account lifecycle:** optional email verification and one-time password reset links through Resend.
 - **Shared abuse protection:** PostgreSQL-backed limits protect authentication and public chat across instances.
 - **Durable delivery:** webhook jobs survive restarts, retry with backoff and expose a dead-letter state.
@@ -149,8 +151,8 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **97 automated tests passed** on SQLite; the same suite also runs against isolated PostgreSQL schemas in CI.
-- **16/16 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution, integrations, team access, billing, order operations, catalog editing and shop policies.
+- **108 automated tests passed** on SQLite; the same suite also runs against isolated PostgreSQL schemas in CI.
+- **20/20 browser E2E checks passed** on the PostgreSQL-backed Docker release across AI reply, priority inbox, human copilot, takeover, resolution, integrations, team access, billing, order operations, catalog editing, shop policies and platform support. The four platform checks require the disposable operator fixture; CI provisions it only inside its test container.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
 - Coverage includes tenant isolation, product grounding, stock guard, explicit confirmation, prompt injection refusal and human handoff.
@@ -161,6 +163,8 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 
 | Method | Endpoint | Purpose |
 |---|---|---|
+| `GET` | `/admin`, `/api/admin/*` | Separately authorized platform operations console |
+| `PATCH/POST` | `/api/admin/users/{id}/status`, `/shops/{id}/trial`, `/jobs/{id}/retry` | Audited account support, plan trials and failed-job recovery |
 | `GET` | `/api/shops` | List tenant workspaces |
 | `PATCH` | `/api/shops/{slug}` | Update a managed shop's profile, policy and agent voice |
 | `GET` | `/api/shops/{slug}/products` | Read tenant-scoped catalog |

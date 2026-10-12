@@ -16,10 +16,12 @@ import httpx
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
+from app.admin import router as admin_router
 from app.agent import sales_agent
 from app.auth import EmailNotVerifiedError, auth_service, require_user, token_digest
-from app.billing import PLANS, billing_service
+from app.billing import billing_service
 from app.channels.base import InboundMessage
 from app.channels.make import MakeMessengerAdapter
 from app.channels.meta import MetaMessengerAdapter
@@ -32,9 +34,10 @@ from app.inbox import inbox_service
 from app.jobs import job_worker
 from app.meta_oauth import meta_oauth_service
 from app.observability import RequestObservabilityMiddleware, metrics
+from app.plans import PLANS
 from app.production import production_errors
 from app.rate_limit import enforce_rate_limit
-from app.repository import repository
+from app.repository import SeatLimitReached, repository
 from app.schemas import (
     AccountEmailRequest,
     AccountTokenRequest,
@@ -118,6 +121,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.add_middleware(RequestObservabilityMiddleware)
+app.include_router(admin_router)
 
 STATIC_DIR = BASE_DIR / "app" / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -153,6 +157,7 @@ def auth_me(request: Request) -> dict:
     user = auth_service.user_from_request(request)
     return {
         "authenticated": bool(user),
+        "platform_admin": bool(user) and repository.is_platform_admin(user["id"]),
         "auth_required": settings.auth_required,
         "registration_enabled": settings.registration_enabled,
         "password_reset_available": email_service.configured,
@@ -540,7 +545,8 @@ def get_shop_team(slug: str, request: Request) -> dict:
     team = repository.list_shop_team(shop["id"])
     if membership["role"] != "owner":
         team["invitations"] = []
-    return {**team, "current_user_id": user["id"], "current_role": membership["role"]}
+    return {**team, "current_user_id": user["id"], "current_role": membership["role"],
+            "seats": repository.seat_limits(shop["id"])}
 
 
 @app.post("/api/shops/{slug}/team/invitations", status_code=201)
@@ -558,6 +564,8 @@ def invite_shop_member(slug: str, payload: TeamInvitationCreate, request: Reques
             expires_at=expires_at,
             invited_by=user["id"],
         )
+    except SeatLimitReached as exc:
+        raise HTTPException(status_code=409, detail="Shop đã hết chỗ cho thành viên ở gói hiện tại.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail="Email này đã là thành viên của shop.") from exc
     sent = False
@@ -577,9 +585,12 @@ def accept_shop_invitation(token: str, request: Request) -> dict:
     if len(token) < 20 or len(token) > 300:
         raise HTTPException(status_code=400, detail="Lời mời không hợp lệ hoặc đã hết hạn.")
     user = require_user(request)
-    shop = repository.accept_shop_invitation(
-        token_digest(token), user["id"], datetime.now(UTC).isoformat()
-    )
+    try:
+        shop = repository.accept_shop_invitation(
+            token_digest(token), user["id"], datetime.now(UTC).isoformat()
+        )
+    except SeatLimitReached as exc:
+        raise HTTPException(status_code=409, detail="Shop đã hết chỗ cho thành viên.") from exc
     if not shop:
         raise HTTPException(
             status_code=400,
@@ -669,7 +680,8 @@ def get_shop_billing(slug: str, request: Request) -> dict:
         "has_billing_account": bool(subscription.get("stripe_customer_id")),
         "can_manage": membership["role"] == "owner",
         "usage": usage_status(shop["id"]),
-        "seat_limits_enforced": False,
+        "seat_limits_enforced": True,
+        "seats": repository.seat_limits(shop["id"]),
     }
 
 
@@ -678,6 +690,8 @@ def create_billing_checkout(slug: str, payload: BillingCheckoutRequest, request:
     shop, user, _ = require_shop_role(slug, request, {"owner"})
     try:
         url = billing_service.create_checkout(shop=shop, user=user, plan=payload.plan)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
@@ -720,10 +734,13 @@ async def stripe_webhook(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="Payload Stripe không hợp lệ.") from exc
     if not isinstance(event, dict) or not isinstance(event.get("data"), dict):
         raise HTTPException(status_code=400, detail="Payload Stripe không hợp lệ.")
-    return {
-        "received": True,
-        "applied": billing_service.apply_event(event),
-    }
+    try:
+        applied = await run_in_threadpool(billing_service.apply_event, event)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Sự kiện thanh toán không hợp lệ.") from exc
+    except (RuntimeError, httpx.HTTPError) as exc:
+        raise HTTPException(status_code=503, detail="Chưa đồng bộ được subscription; hãy thử lại.") from exc
+    return {"received": True, "applied": applied}
 
 
 @app.get("/api/shops/{slug}/products")
