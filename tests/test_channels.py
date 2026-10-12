@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -194,6 +195,13 @@ def test_oauth_connected_page_routes_webhook_to_its_own_shop(monkeypatch):
                 "X-Hub-Signature-256": signature,
             },
         )
+
+        # The durable webhook acknowledges enqueueing, not completed delivery.
+        # Keep the application's worker alive until this asynchronous job finishes.
+        deadline = time.monotonic() + 10
+        while repository.job_stats()["queued"] or repository.job_stats()["running"]:
+            assert time.monotonic() < deadline, "OAuth webhook worker did not finish"
+            time.sleep(0.02)
 
     assert response.status_code == 200
     assert response.json()["events"] == 1
