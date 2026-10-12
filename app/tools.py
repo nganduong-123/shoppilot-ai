@@ -393,57 +393,68 @@ def confirm_pending_order(
     if not pending or pending.get("type") != "confirm_order":
         return None
     draft_id = pending["draft_order_id"]
-    order_payload = None
-    with db_session() as connection:
-        row = connection.execute(
-            "SELECT * FROM draft_orders WHERE id = ? AND status = 'awaiting_confirmation'",
-            (draft_id,),
-        ).fetchone()
-        if not row:
-            return None
-        items = json_loads(row["items_json"], [])
-        for item in items:
-            product = connection.execute(
-                "SELECT stock FROM products WHERE id = ?", (item["product_id"],)
+    try:
+        with db_session() as connection:
+            # Claim the draft atomically before modifying stock. Competing confirmations
+            # of the same draft cannot both succeed, on SQLite or PostgreSQL.
+            row = connection.execute(
+                """
+                UPDATE draft_orders SET status = 'confirmed', updated_at = ?
+                WHERE id = ? AND conversation_id = ? AND shop_id = ?
+                    AND status = 'awaiting_confirmation'
+                RETURNING *
+                """, (utc_now(), draft_id, conversation_id, conversation["shop_id"]),
             ).fetchone()
-            if not product or product["stock"] < item["quantity"]:
-                return {"confirmed": False, "error": "Sản phẩm vừa hết hoặc không đủ hàng."}
-        for item in items:
+            if not row:
+                return None
+            items = json_loads(row["items_json"], [])
+            if not items:
+                raise StockUnavailable
+            # Stable lock order also prevents deadlocks between multi-product orders.
+            for item in sorted(items, key=lambda item: item["product_id"]):
+                quantity = item["quantity"]
+                if not isinstance(quantity, int) or quantity <= 0:
+                    raise StockUnavailable
+                updated = connection.execute(
+                    """
+                    UPDATE products SET stock = stock - ?
+                    WHERE id = ? AND shop_id = ? AND active = 1 AND stock >= ?
+                    """, (quantity, item["product_id"], row["shop_id"], quantity),
+                )
+                if updated.rowcount != 1:
+                    # Raising rolls back every earlier decrement as well as the draft.
+                    raise StockUnavailable
+            if settings.commerce_order_webhook_url:
+                repo.enqueue_job(
+                    "commerce_order",
+                    {
+                        "event": "order.confirmed",
+                        "order_id": draft_id.replace("DR-", "SP-"),
+                        "draft_order_id": draft_id,
+                        "shop_id": row["shop_id"],
+                        "conversation_id": conversation_id,
+                        "items": items,
+                        "subtotal": row["subtotal"],
+                        "shipping_fee": row["shipping_fee"],
+                        "total": row["total"],
+                        "currency": "VND",
+                        "confirmed_at": utc_now(),
+                    },
+                    dedupe_key=f"commerce:{draft_id}", connection=connection,
+                )
             connection.execute(
-                "UPDATE products SET stock = stock - ? WHERE id = ?",
-                (item["quantity"], item["product_id"]),
+                "UPDATE conversations SET pending_action_json = NULL, updated_at = ? "
+                "WHERE id = ?", (utc_now(), conversation_id),
             )
-        connection.execute(
-            "UPDATE draft_orders SET status = 'confirmed', updated_at = ? WHERE id = ?",
-            (utc_now(), draft_id),
-        )
-        if settings.commerce_order_webhook_url:
-            order_payload = {
-                "event": "order.confirmed",
-                "order_id": draft_id.replace("DR-", "SP-"),
-                "draft_order_id": draft_id,
-                "shop_id": row["shop_id"],
-                "conversation_id": conversation_id,
-                "items": items,
-                "subtotal": row["subtotal"],
-                "shipping_fee": row["shipping_fee"],
-                "total": row["total"],
-                "currency": "VND",
-                "confirmed_at": utc_now(),
-            }
-            # Persist the delivery job in the same transaction as stock and order
-            # changes. A process crash can no longer confirm an order without an
-            # outbox record for the external commerce system.
-            repo.enqueue_job(
-                "commerce_order",
-                order_payload,
-                dedupe_key=f"commerce:{draft_id}",
-                connection=connection,
-            )
-    repo.update_conversation(conversation_id, clear_pending=True)
+    except StockUnavailable:
+        return {"confirmed": False, "error": "Sản phẩm vừa hết hoặc không đủ hàng."}
     return {
         "confirmed": True,
         "order_id": draft_id.replace("DR-", "SP-"),
         "draft_order_id": draft_id,
         "status": "confirmed",
     }
+
+
+class StockUnavailable(Exception):
+    """Abort the entire order transaction when any item cannot be reserved."""

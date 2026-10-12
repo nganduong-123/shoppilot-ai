@@ -32,6 +32,7 @@ from app.inbox import inbox_service
 from app.jobs import job_worker
 from app.meta_oauth import meta_oauth_service
 from app.observability import RequestObservabilityMiddleware, metrics
+from app.production import production_errors
 from app.rate_limit import enforce_rate_limit
 from app.repository import repository
 from app.schemas import (
@@ -59,6 +60,7 @@ from app.schemas import (
 )
 from app.seed import seed_demo_data
 from app.token_crypto import decrypt_secret
+from app.usage import reserve_ai_turn, usage_status
 
 logger = logging.getLogger("shoppilot.accounts")
 
@@ -83,9 +85,13 @@ def require_account_email() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(application: FastAPI):
+    errors = production_errors(settings)
+    if errors:
+        raise RuntimeError("Unsafe production configuration: " + "; ".join(errors))
     init_database()
-    seed_demo_data()
+    if settings.seed_demo_data:
+        seed_demo_data()
     if settings.meta_page_id:
         shop = repository.get_shop(settings.meta_shop_slug)
         existing = repository.get_channel_connection_by_external(
@@ -98,6 +104,7 @@ async def lifespan(_: FastAPI):
                 {"source": "environment"},
             )
     worker_task = asyncio.create_task(job_worker.run())
+    application.state.worker_task = worker_task
     try:
         yield
     finally:
@@ -309,9 +316,19 @@ def liveness() -> dict:
 
 
 @app.get("/api/health/ready")
-def readiness() -> dict:
-    result = health()
-    result["ready"] = True
+def readiness(request: Request, response: Response) -> dict:
+    worker = getattr(request.app.state, "worker_task", None)
+    worker_alive = worker is not None and not worker.done()
+    try:
+        result = health()
+    except Exception:  # noqa: BLE001 - a health probe must fail closed without diagnostics
+        response.status_code = 503
+        return {"ready": False, "database": "unavailable", "worker_alive": worker_alive}
+    result["worker_alive"] = worker_alive
+    result["ready"] = worker_alive
+    result["degraded"] = result["jobs"]["failed"] > 0
+    if not worker_alive:
+        response.status_code = 503
     return result
 
 
@@ -330,9 +347,16 @@ def meta_integration_status(request: Request, shop_slug: str | None = None) -> d
     if shop_slug:
         shop = require_managed_shop(shop_slug, request)
         connections = repository.list_channel_connections(shop["id"], "messenger")
-    configured = bool(connections) or MetaMessengerAdapter().configured
+    usable_connections = [item for item in connections if item["status"] == "active" and (
+        item["config"].get("page_access_token_enc") or (
+            item["external_account_id"] == settings.meta_page_id
+            and MetaMessengerAdapter().configured
+        )
+    )]
+    configured = bool(usable_connections) if shop_slug else MetaMessengerAdapter().configured
     return {
         "configured": configured,
+        "delivery_verified": False,
         "oauth_available": meta_oauth_service.configured,
         "connections": [
             {
@@ -395,9 +419,11 @@ async def meta_oauth_callback(request: Request, state: str, code: str) -> Redire
     user = require_user(request)
     try:
         await meta_oauth_service.exchange_code(user["id"], state, code)
-    except (ValueError, RuntimeError, httpx.HTTPError) as exc:
+    except (ValueError, RuntimeError, httpx.HTTPError):
         return RedirectResponse(
-            f"/static/meta-connect.html?error={quote(str(exc))}", status_code=303
+            "/static/meta-connect.html?error=" + quote(
+                "Không thể kết nối Meta. Kiểm tra quyền Page và thử lại."
+            ), status_code=303
         )
     return RedirectResponse(f"/static/meta-connect.html?state={quote(state)}", status_code=303)
 
@@ -417,9 +443,11 @@ async def complete_meta_oauth(
 ) -> dict:
     shop, user = require_shop_owner(slug, request)
     try:
-        return await meta_oauth_service.complete(
+        connection = await meta_oauth_service.complete(
             user["id"], shop["id"], payload.state, payload.page_id
         )
+        return {key: connection[key] for key in
+                ("id", "shop_id", "channel", "external_account_id", "display_name", "status")}
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
@@ -453,6 +481,16 @@ def require_managed_shop(slug: str, request: Request) -> dict:
     user = authenticated_user_if_required(request)
     if user and not repository.get_shop_member(shop["id"], user["id"]):
         raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập cửa hàng này.")
+    return shop
+
+
+def require_editable_shop(slug: str, request: Request) -> dict:
+    shop = require_managed_shop(slug, request)
+    user = auth_service.user_from_request(request)
+    if user:
+        member = repository.get_shop_member(shop["id"], user["id"])
+        if not member or member["role"] not in {"owner", "manager"}:
+            raise HTTPException(status_code=403, detail="Chỉ Owner hoặc Manager được sửa shop.")
     return shop
 
 
@@ -492,7 +530,7 @@ def get_shop(slug: str) -> dict:
 
 @app.patch("/api/shops/{slug}")
 def update_shop(slug: str, payload: ShopUpdate, request: Request) -> dict:
-    shop = require_managed_shop(slug, request)
+    shop = require_editable_shop(slug, request)
     return repository.update_shop(shop["id"], payload.model_dump(exclude_unset=True))
 
 
@@ -524,7 +562,9 @@ def invite_shop_member(slug: str, payload: TeamInvitationCreate, request: Reques
         raise HTTPException(status_code=409, detail="Email này đã là thành viên của shop.") from exc
     sent = False
     if email_service.configured:
-        sent = email_service.send_team_invitation(email, user["display_name"], shop["name"], token)
+        sent = send_account_email(
+            email_service.send_team_invitation, email, user["display_name"], shop["name"], token
+        )
     return {
         **invitation,
         "email_sent": sent,
@@ -628,6 +668,8 @@ def get_shop_billing(slug: str, request: Request) -> dict:
         "subscription": public_subscription,
         "has_billing_account": bool(subscription.get("stripe_customer_id")),
         "can_manage": membership["role"] == "owner",
+        "usage": usage_status(shop["id"]),
+        "seat_limits_enforced": False,
     }
 
 
@@ -676,6 +718,8 @@ async def stripe_webhook(request: Request) -> dict:
         event = json.loads(body)
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="Payload Stripe không hợp lệ.") from exc
+    if not isinstance(event, dict) or not isinstance(event.get("data"), dict):
+        raise HTTPException(status_code=400, detail="Payload Stripe không hợp lệ.")
     return {
         "received": True,
         "applied": billing_service.apply_event(event),
@@ -690,11 +734,11 @@ def list_products(slug: str) -> list[dict]:
 
 @app.post("/api/shops/{slug}/products", status_code=201)
 def create_product(slug: str, payload: ProductCreate, request: Request) -> dict:
-    shop = require_managed_shop(slug, request)
+    shop = require_editable_shop(slug, request)
     try:
         return repository.create_product(shop["id"], payload.model_dump())
     except Exception as exc:
-        if not is_integrity_error(exc):
+        if not is_unique_violation(exc):
             raise
         raise HTTPException(status_code=409, detail="SKU đã tồn tại trong shop.") from exc
 
@@ -703,7 +747,7 @@ def create_product(slug: str, payload: ProductCreate, request: Request) -> dict:
 async def import_products(
     slug: str, request: Request, file: Annotated[UploadFile, File(...)]
 ) -> dict:
-    shop = require_managed_shop(slug, request)
+    shop = require_editable_shop(slug, request)
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Vui lòng tải file CSV.")
     raw = await file.read(settings.max_csv_upload_bytes + 1)
@@ -720,20 +764,27 @@ async def import_products(
             status_code=400,
             detail="CSV cần các cột: sku, name, category, price, stock.",
         )
+    # Check the whole file's shape and row limit before writing any product.
+    rows = []
+    try:
+        for row in reader:
+            if len(rows) >= settings.max_csv_rows:
+                raise HTTPException(status_code=413, detail="File CSV có quá nhiều dòng.")
+            if None in row or any(value is None for value in row.values()):
+                raise HTTPException(status_code=400, detail="Số cột CSV không khớp tiêu đề.")
+            rows.append(row)
+    except csv.Error as exc:
+        raise HTTPException(status_code=400, detail="Định dạng CSV không hợp lệ.") from exc
     imported = 0
     errors = []
-    for line_number, row in enumerate(reader, 2):
-        if line_number - 1 > settings.max_csv_rows:
-            raise HTTPException(status_code=413, detail="File CSV có quá nhiều dòng.")
+    for line_number, row in enumerate(rows, 2):
         try:
             attributes = {
                 key.removeprefix("attr_"): value
                 for key, value in row.items()
                 if key.startswith("attr_") and value
             }
-            repository.create_product(
-                shop["id"],
-                {
+            product = ProductCreate.model_validate({
                     "sku": row["sku"],
                     "name": row["name"],
                     "category": row["category"],
@@ -741,14 +792,39 @@ async def import_products(
                     "price": int(row["price"]),
                     "stock": int(row["stock"]),
                     "attributes": attributes,
-                },
-            )
+                })
+            repository.create_product(shop["id"], product.model_dump())
             imported += 1
         except Exception as exc:
-            if not isinstance(exc, ValueError) and not is_integrity_error(exc):
+            if not isinstance(exc, ValueError) and not is_unique_violation(exc):
                 raise
-            errors.append({"line": line_number, "error": str(exc)})
+            errors.append({"line": line_number, "error": (
+                "SKU trùng trong shop." if is_unique_violation(exc)
+                else "Dữ liệu không hợp lệ; kiểm tra các cột và giá/tồn kho không âm."
+            )})
     return {"imported": imported, "errors": errors}
+
+
+@app.put("/api/shops/{slug}/products/{product_id}")
+def edit_product(slug: str, product_id: int, payload: ProductCreate, request: Request) -> dict:
+    shop = require_editable_shop(slug, request)
+    try:
+        product = repository.update_product(shop["id"], product_id, payload.model_dump())
+    except Exception as exc:
+        if not is_unique_violation(exc):
+            raise
+        raise HTTPException(status_code=409, detail="SKU đã tồn tại trong shop.") from exc
+    if not product:
+        raise HTTPException(status_code=404, detail="Không tìm thấy sản phẩm đang bán.")
+    return product
+
+
+@app.delete("/api/shops/{slug}/products/{product_id}")
+def archive_product(slug: str, product_id: int, request: Request) -> dict:
+    shop = require_editable_shop(slug, request)
+    if not repository.archive_product(shop["id"], product_id):
+        raise HTTPException(status_code=404, detail="Không tìm thấy sản phẩm đang bán.")
+    return {"archived": True}
 
 
 @app.post("/api/shops/{slug}/chat", response_model=ChatResponse)
@@ -760,7 +836,7 @@ async def chat(slug: str, payload: ChatRequest, request: Request) -> dict:
         settings.chat_rate_limit_window_seconds,
         enabled=settings.rate_limit_enabled,
     )
-    shop = require_shop(slug)
+    shop = require_managed_shop(slug, request)
     return await sales_agent.respond(shop, payload.message.strip(), payload.conversation_id)
 
 
@@ -775,11 +851,18 @@ async def web_channel_message(slug: str, payload: WebChannelMessage, request: Re
     )
     shop = require_shop(slug)
     external_conversation_id = payload.conversation_id or str(uuid4())
+    # Preserve existing sessions; new external IDs are isolated per tenant.
+    legacy = repository.get_channel_conversation_by_external(
+        shop["id"], "web", external_conversation_id
+    )
+    storage_conversation_id = external_conversation_id if legacy else (
+        f"{shop['id']}:{external_conversation_id}"
+    )
     customer_id = payload.customer_id or f"web:{external_conversation_id}"
     inbound = InboundMessage(
         channel="web",
         external_event_id=str(uuid4()),
-        external_conversation_id=external_conversation_id,
+        external_conversation_id=storage_conversation_id,
         external_customer_id=customer_id,
         customer_name=payload.customer_name,
         text=payload.message.strip(),
@@ -831,8 +914,10 @@ async def make_messenger_message(
 def web_channel_history(slug: str, external_id: str) -> list[dict]:
     shop = require_shop(slug)
     conversation = repository.get_channel_conversation_by_external(
-        shop["id"], "web", external_id
+        shop["id"], "web", f"{shop['id']}:{external_id}"
     )
+    if not conversation:
+        conversation = repository.get_channel_conversation_by_external(shop["id"], "web", external_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
     return repository.list_channel_messages(conversation["id"])
@@ -861,6 +946,11 @@ async def receive_meta_webhook(request: Request) -> dict:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="Webhook JSON không hợp lệ.") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("entry", []), list):
+        raise HTTPException(status_code=400, detail="Webhook payload không hợp lệ.")
+    if any(not isinstance(entry, dict) or not isinstance(entry.get("messaging", []), list)
+           for entry in payload.get("entry", [])):
+        raise HTTPException(status_code=400, detail="Webhook entry không hợp lệ.")
     accepted = 0
     for entry in payload.get("entry", []):
         page_id = str(entry.get("id") or "")
@@ -953,6 +1043,8 @@ async def create_inbox_copilot_suggestion(
     slug: str, conversation_id: str, request: Request
 ) -> dict:
     shop, conversation = require_channel_conversation(slug, conversation_id, request)
+    if not reserve_ai_turn(shop["id"]):
+        raise HTTPException(status_code=429, detail="Shop đã dùng hết lượt AI tháng này.")
     try:
         return await inbox_copilot.suggest(shop, conversation)
     except ValueError as exc:
@@ -1047,8 +1139,7 @@ def conversation_trace(conversation_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
     user = authenticated_user_if_required(request)
     if (
-        settings.auth_required
-        and user
+        user
         and not repository.get_shop_member(trace["conversation"]["shop_id"], user["id"])
     ):
         raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập hội thoại này.")
@@ -1064,8 +1155,7 @@ def create_conversation_feedback(
         raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
     user = authenticated_user_if_required(request)
     if (
-        settings.auth_required
-        and user
+        user
         and not repository.get_shop_member(trace["conversation"]["shop_id"], user["id"])
     ):
         raise HTTPException(status_code=403, detail="Bạn không có quyền đánh giá hội thoại này.")

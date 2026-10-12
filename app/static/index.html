@@ -180,9 +180,41 @@
       <section class="view" id="view-catalog">
         <div class="section-toolbar">
           <div><p class="section-kicker">DỮ LIỆU SHOP</p><h2>Catalog sản phẩm</h2><p>Dữ liệu được cô lập theo từng workspace.</p></div>
-          <label class="upload-button">Nhập CSV<input id="csv-input" type="file" accept=".csv" hidden></label>
+          <div class="catalog-actions" id="catalog-actions">
+            <button class="text-button" id="edit-shop" type="button">Cấu hình shop</button>
+            <button class="text-button" id="add-product" type="button">Thêm sản phẩm</button>
+            <label class="upload-button">Nhập CSV<input id="csv-input" type="file" accept=".csv" hidden></label>
+          </div>
         </div>
         <div class="catalog-grid" id="catalog-grid"></div>
+        <dialog id="product-editor" class="product-editor">
+          <form id="product-form">
+            <h2 id="product-editor-title">Thêm sản phẩm</h2>
+            <input name="product_id" type="hidden">
+            <label>SKU<input name="sku" required minlength="2" maxlength="50"></label>
+            <label>Tên sản phẩm<input name="name" required minlength="2" maxlength="160"></label>
+            <label>Danh mục<input name="category" required minlength="2" maxlength="60"></label>
+            <label>Giá (VND)<input name="price" type="number" required min="0" step="1"></label>
+            <label>Tồn kho<input name="stock" type="number" required min="0" step="1"></label>
+            <label>Mô tả<textarea name="description" maxlength="1000"></textarea></label>
+            <label>Thuộc tính (JSON)<textarea name="attributes" spellcheck="false">{}</textarea></label>
+            <p id="product-form-error" role="alert" hidden></p>
+            <div class="catalog-actions"><button type="button" id="cancel-product">Hủy</button><button type="submit" id="save-product">Lưu sản phẩm</button></div>
+          </form>
+        </dialog>
+        <dialog id="shop-editor" class="product-editor">
+          <form id="shop-form">
+            <h2>Cấu hình shop và kiến thức AI</h2>
+            <label>Tên shop<input name="name" required minlength="2" maxlength="100"></label>
+            <label>Danh mục<input name="category" required minlength="2" maxlength="60"></label>
+            <label>Giới thiệu<input name="tagline" required minlength="2" maxlength="160"></label>
+            <label>Chính sách thực tế của shop<textarea name="policy_text" required minlength="20" maxlength="8000"></textarea></label>
+            <label>Cách AI tư vấn<textarea name="voice" required minlength="2" maxlength="500"></textarea></label>
+            <p>Chỉ nhập chính sách shop thực sự áp dụng. AI dùng thông tin này để tư vấn khách.</p>
+            <p id="shop-form-error" role="alert" hidden></p>
+            <div class="catalog-actions"><button type="button" id="cancel-shop">Hủy</button><button type="submit" id="save-shop">Lưu cấu hình</button></div>
+          </form>
+        </dialog>
       </section>
 
       <section class="view" id="view-orders">
@@ -283,6 +315,8 @@
     </main>
   </div>
   <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js" defer></script>
+  <link rel="stylesheet" href="/static/catalog.css?v=1.2.0">
+  <script src="/static/catalog.js?v=1.2.0" defer></script>
+  <script src="/static/app.js?v=1.2.0" defer></script>
 </body>
 </html>

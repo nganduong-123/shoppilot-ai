@@ -20,8 +20,12 @@ def env_bool(name: str, default: bool = False) -> bool:
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "ShopPilot AI"
-    app_version: str = "1.1.1"
+    app_version: str = "1.2.0"
     app_env: str = os.getenv("APP_ENV", "development")
+    seed_demo_data: bool = env_bool("SEED_DEMO_DATA", os.getenv("APP_ENV") != "production")
+    llm_turn_timeout_seconds: int = int(os.getenv("LLM_TURN_TIMEOUT_SECONDS", "30"))
+    job_timeout_seconds: int = int(os.getenv("JOB_TIMEOUT_SECONDS", "90"))
+    job_shutdown_seconds: int = int(os.getenv("JOB_SHUTDOWN_SECONDS", "10"))
     database_path: Path = BASE_DIR / os.getenv("DATABASE_PATH", "data/shoppilot.db")
     database_url: str | None = os.getenv("DATABASE_URL")
     auth_required: bool = env_bool("AUTH_REQUIRED", False)

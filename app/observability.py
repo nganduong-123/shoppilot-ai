@@ -6,11 +6,12 @@ import re
 import threading
 import time
 from collections import defaultdict
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from app.config import settings
 
@@ -84,8 +85,27 @@ class RequestObservabilityMiddleware(BaseHTTPMiddleware):
         started = time.perf_counter()
         status = 500
         try:
-            response = await call_next(request)
+            protected_write = request.method not in {"GET", "HEAD", "OPTIONS"} and (
+                request.url.path.startswith("/api/auth/")
+                or request.url.path.startswith("/api/invitations/")
+                or request.url.path.startswith("/api/shops/")
+            )
+            origin = request.headers.get("origin")
+            allowed = settings.public_base_url.rstrip("/")
+            if settings.app_env != "production":
+                allowed = str(request.base_url).rstrip("/")
+            cross_origin = origin is not None and (
+                urlparse(origin).scheme, urlparse(origin).netloc
+            ) != (urlparse(allowed).scheme, urlparse(allowed).netloc)
+            if protected_write and (
+                cross_origin or request.headers.get("sec-fetch-site") == "cross-site"
+            ):
+                response = JSONResponse({"detail": "Nguồn yêu cầu không được phép."}, status_code=403)
+            else:
+                response = await call_next(request)
             status = response.status_code
+            if request.url.path.startswith("/api/") or request.url.path in {"/login", "/metrics"}:
+                response.headers["Cache-Control"] = "no-store"
             response.headers["X-Request-ID"] = request_id
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -112,7 +132,8 @@ class RequestObservabilityMiddleware(BaseHTTPMiddleware):
         finally:
             duration = time.perf_counter() - started
             route_object = request.scope.get("route")
-            route = getattr(route_object, "path", request.url.path)
+            # Never retain arbitrary paths or tokens as metrics labels or access logs.
+            route = getattr(route_object, "path", "/unmatched")
             metrics.observe(request.method, route, status, duration)
             logger.info(
                 json.dumps(

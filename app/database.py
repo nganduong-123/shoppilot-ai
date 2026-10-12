@@ -164,6 +164,16 @@ CREATE TABLE IF NOT EXISTS channel_events (
     UNIQUE(channel, external_event_id)
 );
 
+CREATE TABLE IF NOT EXISTS channel_event_replies (
+    channel TEXT NOT NULL,
+    external_event_id TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(channel, external_event_id),
+    FOREIGN KEY(channel, external_event_id)
+        REFERENCES channel_events(channel, external_event_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS copilot_suggestions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     channel_conversation_id TEXT NOT NULL REFERENCES channel_conversations(id) ON DELETE CASCADE,
@@ -298,6 +308,13 @@ CREATE TABLE IF NOT EXISTS shop_subscriptions (
     stripe_subscription_id TEXT UNIQUE,
     current_period_end TEXT,
     updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS shop_ai_usage (
+    shop_id INTEGER NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+    period TEXT NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0 CHECK(used >= 0),
+    PRIMARY KEY(shop_id, period)
 );
 
 CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id);
@@ -448,7 +465,16 @@ def connect(path: Path | None = None) -> sqlite3.Connection | PostgresConnection
     if using_postgres(path):
         if psycopg is None:
             raise RuntimeError("DATABASE_URL requires the psycopg package.")
-        return PostgresConnection(psycopg.connect(settings.database_url))
+        raw_connection = psycopg.connect(
+            settings.database_url, connect_timeout=10,
+            options="-c statement_timeout=15000 -c lock_timeout=5000",
+        )
+        schema = getattr(settings, "database_schema", None)
+        if schema:
+            from psycopg import sql
+
+            raw_connection.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+        return PostgresConnection(raw_connection)
     db_path = path or settings.database_path
     db_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(db_path, check_same_thread=False)

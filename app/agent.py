@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -10,6 +11,7 @@ import httpx
 from app.config import settings
 from app.repository import Repository, repository
 from app.tools import TOOL_SCHEMAS, ShopTools, confirm_pending_order, normalize_text
+from app.usage import reserve_ai_turn
 
 CONFIRM_PHRASES = {
     "xac nhan", "dong y", "chot don", "dat di", "ok dat", "yes", "confirm"
@@ -41,7 +43,14 @@ class SalesAgent:
         normalized = normalize_text(user_message)
 
         pending = self.repo.get_conversation(conversation_id).get("pending_action")
-        if pending and any(phrase in normalized for phrase in CONFIRM_PHRASES):
+        confirmation = re.sub(r"\s+", " ", normalized)
+        explicitly_confirmed = bool(re.fullmatch(
+            r"(?:(?:toi|minh|em|anh|chi) )?"
+            r"(?:xac nhan|dong y|chot don|dat di|ok dat|yes|confirm)"
+            r"(?: (?:don|don hang|don nay|don hang nay))?(?: (?:nhe|nha|a))?",
+            confirmation,
+        ))
+        if pending and explicitly_confirmed:
             result = confirm_pending_order(conversation_id, self.repo)
             if result and result.get("confirmed"):
                 reply = (
@@ -60,6 +69,17 @@ class SalesAgent:
                 model="workflow",
             )
 
+        if not reserve_ai_turn(shop["id"], self.repo):
+            handoff = ShopTools(shop, conversation_id, self.repo).handoff_to_human(
+                "Workspace reached its monthly AI budget"
+            )
+            return self._finalize(
+                conversation_id,
+                "Shop đã dùng hết lượt trợ lý AI tháng này. Em chuyển cuộc trò chuyện "
+                "cho nhân viên để tiếp tục hỗ trợ anh/chị.",
+                model="usage-guard", handoff=handoff,
+            )
+
         deterministic_markers = [
             "ship", "giao hang", "van chuyen",
             "muon mua", "dat mua", "chot mau", "lay mau", "tao don",
@@ -72,8 +92,11 @@ class SalesAgent:
 
         if settings.groq_api_key:
             try:
-                return await self._groq_loop(shop, conversation_id, user_message)
-            except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError):
+                return await asyncio.wait_for(
+                    self._groq_loop(shop, conversation_id, user_message),
+                    timeout=getattr(settings, "llm_turn_timeout_seconds", 30),
+                )
+            except (TimeoutError, httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError):
                 pass
         return self._rule_fallback(shop, conversation_id, user_message)
 

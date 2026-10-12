@@ -117,7 +117,9 @@ class Repository:
                 (user_id, email, display_name, password_hash, now),
             )
             existing_shop = connection.execute(
-                "SELECT id FROM shops WHERE slug = ?",
+                # A no-op update locks the existing shop until membership is checked.
+                # Two simultaneous registrations cannot both claim its ownership.
+                "UPDATE shops SET slug = slug WHERE slug = ? RETURNING id",
                 (shop["slug"],),
             ).fetchone()
             if existing_shop:
@@ -585,6 +587,27 @@ class Repository:
             row = connection.execute("SELECT * FROM products WHERE id = ?", (cursor.lastrowid,)).fetchone()
             return _hydrate_product(row)
 
+    def update_product(self, shop_id: int, product_id: int, data: dict) -> dict | None:
+        with db_session() as connection:
+            row = connection.execute(
+                """
+                UPDATE products SET sku = ?, name = ?, category = ?, description = ?,
+                    price = ?, stock = ?, attributes_json = ?
+                WHERE shop_id = ? AND id = ? AND active = 1 RETURNING *
+                """, (data["sku"], data["name"], data["category"], data["description"],
+                      data["price"], data["stock"], json_dumps(data.get("attributes", {})),
+                      shop_id, product_id),
+            ).fetchone()
+            return _hydrate_product(row) if row else None
+
+    def archive_product(self, shop_id: int, product_id: int) -> bool:
+        with db_session() as connection:
+            cursor = connection.execute(
+                "UPDATE products SET active = 0 WHERE shop_id = ? AND id = ? AND active = 1",
+                (shop_id, product_id),
+            )
+            return cursor.rowcount == 1
+
     def create_conversation(self, conversation_id: str, shop_id: int) -> dict[str, Any]:
         now = utc_now()
         with db_session() as connection:
@@ -814,6 +837,26 @@ class Repository:
             "current_period_end": None,
             "updated_at": None,
         }
+
+    def ai_usage(self, shop_id: int, period: str) -> int:
+        with db_session() as connection:
+            row = connection.execute(
+                "SELECT used FROM shop_ai_usage WHERE shop_id = ? AND period = ?",
+                (shop_id, period),
+            ).fetchone()
+            return row["used"] if row else 0
+
+    def reserve_ai_turn(self, shop_id: int, period: str, limit: int) -> bool:
+        with db_session() as connection:
+            connection.execute(
+                "INSERT INTO shop_ai_usage (shop_id, period, used) VALUES (?, ?, 0) "
+                "ON CONFLICT(shop_id, period) DO NOTHING", (shop_id, period),
+            )
+            cursor = connection.execute(
+                "UPDATE shop_ai_usage SET used = used + 1 "
+                "WHERE shop_id = ? AND period = ? AND used < ?", (shop_id, period, limit),
+            )
+            return cursor.rowcount == 1
 
     def get_subscription_by_provider_id(self, subscription_id: str) -> dict[str, Any] | None:
         with db_session() as connection:
@@ -1108,6 +1151,8 @@ class Repository:
         external_event_id: str,
         event_type: str,
         payload: dict[str, Any],
+        *,
+        resume: bool = False,
     ) -> bool:
         try:
             with db_session() as connection:
@@ -1127,7 +1172,16 @@ class Repository:
         except Exception as exc:
             # A repeated platform webhook must not create a second reply.
             if is_unique_violation(exc):
-                return False
+                with db_session() as connection:
+                    cursor = connection.execute(
+                        """
+                        UPDATE channel_events SET status = 'received', error_text = NULL
+                        WHERE shop_id = ? AND channel = ? AND external_event_id = ?
+                            AND (status = 'failed' OR (status = 'received' AND ? = 1))
+                        """,
+                        (shop_id, channel, external_event_id, int(resume)),
+                    )
+                    return cursor.rowcount == 1
             if not is_integrity_error(exc):
                 raise
             raise
@@ -1143,6 +1197,25 @@ class Repository:
                 WHERE channel = ? AND external_event_id = ?
                 """,
                 (status, error, utc_now(), channel, external_event_id),
+            )
+
+    def get_channel_event_reply(self, channel: str, event_id: str) -> dict[str, Any] | None:
+        with db_session() as connection:
+            row = connection.execute(
+                "SELECT result_json FROM channel_event_replies "
+                "WHERE channel = ? AND external_event_id = ?", (channel, event_id),
+            ).fetchone()
+            return json_loads(row["result_json"]) if row else None
+
+    def save_channel_event_reply(self, channel: str, event_id: str, result: dict) -> None:
+        with db_session() as connection:
+            connection.execute(
+                """
+                INSERT INTO channel_event_replies
+                    (channel, external_event_id, result_json, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(channel, external_event_id) DO NOTHING
+                """, (channel, event_id, json_dumps(result), utc_now()),
             )
 
     def get_or_create_channel_conversation(
@@ -1228,6 +1301,7 @@ class Repository:
                     (channel_conversation_id, external_message_id, direction, sender_type,
                      content, status, metadata_json, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(channel_conversation_id, external_message_id) DO NOTHING
                 """,
                 (
                     channel_conversation_id, external_message_id, direction, sender_type,
@@ -1241,9 +1315,15 @@ class Repository:
                 """,
                 (now, now, channel_conversation_id),
             )
-            row = connection.execute(
-                "SELECT * FROM channel_messages WHERE id = ?", (cursor.lastrowid,)
-            ).fetchone()
+            if cursor.rowcount == 1:
+                row = connection.execute(
+                    "SELECT * FROM channel_messages WHERE id = ?", (cursor.lastrowid,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT * FROM channel_messages WHERE channel_conversation_id = ? "
+                    "AND external_message_id = ?", (channel_conversation_id, external_message_id),
+                ).fetchone()
             result = dict(row)
             result["metadata"] = json_loads(result.pop("metadata_json"))
             return result

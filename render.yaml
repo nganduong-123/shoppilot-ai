@@ -13,6 +13,8 @@ services:
     envVars:
       - key: APP_ENV
         value: production
+      - key: SEED_DEMO_DATA
+        value: "false"
       - key: PUBLIC_BASE_URL
         sync: false
       - key: DATABASE_URL
@@ -41,6 +43,12 @@ services:
         value: "60"
       - key: CHAT_RATE_LIMIT_WINDOW_SECONDS
         value: "60"
+      - key: LLM_TURN_TIMEOUT_SECONDS
+        value: "30"
+      - key: JOB_TIMEOUT_SECONDS
+        value: "90"
+      - key: JOB_SHUTDOWN_SECONDS
+        value: "10"
       - key: MAX_CSV_UPLOAD_BYTES
         value: "2000000"
       - key: MAX_CSV_ROWS

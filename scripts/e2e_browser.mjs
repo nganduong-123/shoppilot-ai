@@ -143,7 +143,8 @@ try {
 
   const findConversation = async () => {
     const rows = await api(`/api/shops/${shop}/inbox/conversations`);
-    return rows.find(row => row.external_conversation_id === externalId);
+    return rows.find(row => row.external_conversation_id === externalId
+      || row.external_conversation_id === `${row.shop_id}:${externalId}`);
   };
   const conversation = await waitFor(findConversation, "conversation appears in inbox API");
   let history = await api(`/api/channels/web/${shop}/conversations/${externalId}/messages`);
@@ -263,6 +264,44 @@ try {
     "order operations render",
   );
 
+  await client.evaluate(`{ document.querySelector('[data-view="catalog"]').click();
+    document.querySelector('#add-product').click();
+    const form = document.querySelector('#product-form');
+    Object.entries({sku:'E2E-CATALOG',name:'E2E product',category:'Retail',price:120000,
+      stock:3,description:'Browser-tested product',attributes:'{}'}).forEach(([key,value])=>form.elements[key].value=value);
+    form.requestSubmit(); }`);
+  await waitFor(
+    () => client.evaluate(`!document.querySelector('#product-editor').open && document.querySelectorAll('[data-edit-product]').length === 1`),
+    "product created through UI",
+  );
+  await client.evaluate(`{ document.querySelector('[data-edit-product]').click();
+    const form = document.querySelector('#product-form');
+    form.elements.stock.value=7;form.elements.price.value=99000;
+    form.elements.attributes.value='not valid json';form.requestSubmit(); }`);
+  await waitFor(
+    () => client.evaluate(`!document.querySelector('#product-form-error').hidden && !document.querySelector('#save-product').disabled`),
+    "invalid product JSON stays editable",
+  );
+  await client.evaluate(`{ const form = document.querySelector('#product-form');
+    form.elements.attributes.value='{"color":"blue"}';form.requestSubmit(); }`);
+  await waitFor(
+    () => client.evaluate(`!document.querySelector('#product-editor').open && document.querySelector('#catalog-grid').textContent.includes('Còn 7') && document.querySelector('#catalog-grid').textContent.includes('99.000')`),
+    "product price and inventory edited",
+  );
+  await client.evaluate(`{ document.querySelector('#edit-shop').click();
+    const form = document.querySelector('#shop-form');form.elements.name.value='E2E Updated Shop';
+    form.elements.policy_text.value='Đổi sản phẩm nguyên tem trong bảy ngày kể từ ngày nhận hàng.';
+    form.requestSubmit(); }`);
+  await waitFor(
+    () => client.evaluate(`!document.querySelector('#shop-editor').open && document.querySelector('#shop-name').textContent === 'E2E Updated Shop'`),
+    "shop policy and profile saved",
+  );
+  await client.evaluate(`window.confirm=()=>true;document.querySelector('[data-archive-product]').click();`);
+  await waitFor(
+    () => client.evaluate(`document.querySelectorAll('[data-edit-product]').length === 0 && document.querySelector('#catalog-grid').textContent.includes('Chưa có sản phẩm')`),
+    "product archived without removing history",
+  );
+
   console.log(JSON.stringify({
     passed: true,
     version: health.version,
@@ -281,6 +320,9 @@ try {
       "team_access_management",
       "subscription_billing",
       "order_operations",
+      "catalog_create_edit_archive",
+      "catalog_validation_retry",
+      "shop_profile_and_policy",
     ],
   }, null, 2));
   client.socket.close();

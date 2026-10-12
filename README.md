@@ -1,6 +1,10 @@
 # ShopPilot AI
 
-**Production-ready, auditable multi-tenant sales and support platform for online shops.**
+**Auditable multi-tenant sales and support platform for online shops.**
+
+Release 1.2.0 hardens the core flows for a controlled pilot. Public customer launch
+still requires the infrastructure and provider gates in the production runbook;
+passing automated tests is not a substitute for those gates.
 
 **Live demo:** https://shoppilot-ai-bt8u.onrender.com/<br>
 The deployed demo uses PostgreSQL, secure shop accounts and the Groq-hosted
@@ -26,6 +30,8 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Meta review readiness:** public privacy/terms pages plus a signed user-data deletion callback and status receipt.
 - **Secure shop accounts:** scrypt password hashing, HttpOnly sessions and owner/manager/agent tenant boundaries.
 - **Team workspaces:** expiring email invitations, role management and last-owner protection for every tenant.
+- **Shop setup:** owners/managers edit products, inventory and real store policies in the console; agents cannot change the catalog.
+- **Monthly AI budget:** shared, atomic per-shop quotas cover chat and staff copilot; exhaustion hands off to a human without another model call.
 - **Order operations:** staff track confirmed orders through processing, shipping and delivery with carrier codes.
 - **SaaS billing:** Stripe Checkout, Customer Portal and signed subscription webhooks, with a safe Free fallback until Stripe is configured.
 - **Account lifecycle:** optional email verification and one-time password reset links through Resend.
@@ -143,8 +149,8 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **65 automated tests passed**
-- **13/13 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution, integrations, team access, billing and order operations.
+- **97 automated tests passed** on SQLite; the same suite also runs against isolated PostgreSQL schemas in CI.
+- **16/16 browser E2E checks passed** across AI reply, priority inbox, human copilot, takeover, resolution, integrations, team access, billing, order operations, catalog editing and shop policies.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
 - Coverage includes tenant isolation, product grounding, stock guard, explicit confirmation, prompt injection refusal and human handoff.
@@ -222,7 +228,7 @@ docs/                 # Architecture and interview learning material
 
 ## External activation boundaries
 
-The application code and deployment path are complete for a production release. A new installation must still supply credentials for the services it chooses to use: Groq, Resend, Meta and optional shipping/commerce webhooks. Meta Advanced Access is an external review performed by Meta, not a code change. Until a provider URL is configured, the included catalog and shipping rules remain a safe deterministic fallback rather than pretending an external order was fulfilled.
+The deployment path and core shop flows are implemented, but this does not certify a public SaaS launch. A new installation must still supply credentials for the services it chooses to use: Groq, Resend, Meta and optional shipping/commerce webhooks. Meta Advanced Access is an external review performed by Meta, not a code change. Until a provider URL is configured, the included catalog and shipping rules remain a deterministic fallback rather than pretending an external order was fulfilled. Seat-count enforcement and platform-wide administrator tools are not implemented; do not sell plans based on those features yet.
 
 See [docs/PRODUCTION_RUNBOOK.md](docs/PRODUCTION_RUNBOOK.md) for release, monitoring, recovery and connector activation steps.
 

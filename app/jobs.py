@@ -41,29 +41,42 @@ class JobWorker:
 
     async def run(self) -> None:
         self._stop = asyncio.Event()
-        stale_before = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
-        self.repo.requeue_stale_jobs(stale_before)
+        last_recovery = 0.0
         while not self._stop.is_set():
-            if await self.run_once():
-                continue
+            try:
+                now = asyncio.get_running_loop().time()
+                if now - last_recovery >= 60:
+                    stale_before = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+                    await asyncio.to_thread(self.repo.requeue_stale_jobs, stale_before)
+                    last_recovery = now
+                if await self.run_once():
+                    continue
+            except Exception as exc:  # noqa: BLE001 - keep the durable worker alive
+                # An intermittent database outage must not permanently kill the worker.
+                logger.warning("Queue polling failed (%s); retrying", type(exc).__name__)
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self.poll_seconds)
             except TimeoutError:
                 pass
 
     async def run_once(self) -> bool:
-        job = self.repo.claim_job()
+        job = await asyncio.to_thread(self.repo.claim_job)
         if not job:
             return False
         try:
-            await self._process(job["kind"], job["payload"])
-        except Exception as exc:
-            logger.exception("Job %s failed", job["id"])
-            self.repo.fail_job(
-                job["id"], str(exc), job["attempts"], job["max_attempts"]
+            await asyncio.wait_for(
+                self._process(job["kind"], job["payload"]),
+                timeout=settings.job_timeout_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001 - job failures must remain retryable
+            # HTTP exception messages can contain access tokens from request URLs.
+            logger.warning("Job %s failed (%s)", job["id"], type(exc).__name__)
+            await asyncio.to_thread(
+                self.repo.fail_job,
+                job["id"], type(exc).__name__, job["attempts"], job["max_attempts"]
             )
         else:
-            self.repo.complete_job(job["id"])
+            await asyncio.to_thread(self.repo.complete_job, job["id"])
         return True
 
     async def _process(self, kind: str, payload: dict[str, Any]) -> None:
@@ -91,17 +104,15 @@ class JobWorker:
             page_id=connection["external_account_id"],
             page_access_token=token,
         )
-        await inbox_service.process(shop, event, adapter, connection["id"])
+        await inbox_service.process(shop, event, adapter, connection["id"], resume=True)
 
     async def shutdown(self, task: asyncio.Task[None]) -> None:
-        for _ in range(20):
-            if not await self.run_once():
-                break
         self._stop.set()
         try:
-            await asyncio.wait_for(task, timeout=5)
+            await asyncio.wait_for(asyncio.shield(task), timeout=settings.job_shutdown_seconds)
         except TimeoutError:
             task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 job_worker = JobWorker()

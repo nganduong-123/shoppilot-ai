@@ -22,9 +22,12 @@ class InboxService:
         inbound: InboundMessage,
         adapter: ChannelAdapter,
         connection_id: int | None = None,
+        *,
+        resume: bool = False,
     ) -> dict[str, Any]:
         is_new = self.repo.record_channel_event(
-            shop["id"], inbound.channel, inbound.external_event_id, "message", inbound.metadata
+            shop["id"], inbound.channel, inbound.external_event_id, "message", inbound.metadata,
+            resume=resume,
         )
         if not is_new:
             return {"status": "duplicate", "replied": False}
@@ -48,7 +51,8 @@ class InboxService:
                 status="received",
                 metadata=inbound.metadata,
             )
-            if not conversation["bot_enabled"]:
+            result = self.repo.get_channel_event_reply(inbound.channel, inbound.external_event_id)
+            if not conversation["bot_enabled"] and result is None:
                 self.repo.update_channel_workflow(
                     conversation["id"],
                     status="waiting",
@@ -70,21 +74,35 @@ class InboxService:
                     "channel_conversation_id": conversation["id"],
                 }
 
-            result = await self.agent.respond(
-                shop, inbound.text, conversation["internal_conversation_id"]
-            )
+            if result is None:
+                result = await self.agent.respond(
+                    shop, inbound.text, conversation["internal_conversation_id"]
+                )
+                # Persist the response before contacting Meta. A retry resumes delivery
+                # rather than repeating the model call or the order workflow.
+                self.repo.save_channel_event_reply(
+                    inbound.channel, inbound.external_event_id, result
+                )
             if result["status"] == "handoff":
                 self.repo.set_channel_bot(conversation["id"], False, None)
+            elif not self.repo.get_channel_conversation(conversation["id"])["bot_enabled"]:
+                # Staff may take over while the model is still generating its reply.
+                self.repo.mark_channel_event(
+                    inbound.channel, inbound.external_event_id, "waiting_for_human"
+                )
+                return {"status": "waiting_for_human", "replied": False,
+                        "channel_conversation_id": conversation["id"]}
             delivery = await adapter.send_text(inbound.external_customer_id, result["message"])
             outbound_id = delivery.get("message_id") if isinstance(delivery, dict) else None
             self.repo.add_channel_message(
                 conversation["id"],
-                external_message_id=outbound_id,
+                external_message_id=f"reply:{inbound.channel}:{inbound.external_event_id}",
                 direction="outbound",
                 sender_type="ai",
                 content=result["message"],
                 status="sent",
-                metadata={"model": result["model"], "delivery": delivery},
+                metadata={"model": result["model"], "delivery": delivery,
+                          "provider_message_id": outbound_id},
             )
             self.repo.mark_channel_event(inbound.channel, inbound.external_event_id, "processed")
             return {
@@ -93,9 +111,9 @@ class InboxService:
                 "replied": True,
                 "channel_conversation_id": conversation["id"],
             }
-        except Exception as exc:
+        except Exception:
             self.repo.mark_channel_event(
-                inbound.channel, inbound.external_event_id, "failed", str(exc)[:500]
+                inbound.channel, inbound.external_event_id, "failed", "Channel processing failed"
             )
             raise
 

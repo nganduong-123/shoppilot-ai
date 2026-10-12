@@ -6,12 +6,22 @@ Set these values in the deployment secret store, never in Git:
 
 - `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`, `GROQ_API_KEY`.
 - `PUBLIC_BASE_URL`, `APP_ENV=production`, `AUTH_REQUIRED=true`.
+- `SEED_DEMO_DATA=false`; production startup does not add or rewrite demonstration shops.
 - Meta App ID, App Secret and webhook verify token when Messenger is enabled.
 - `EMAIL_PROVIDER=resend`, `EMAIL_FROM`, `RESEND_API_KEY`, then `EMAIL_VERIFICATION_REQUIRED=true` when account email is enabled.
 - `SHIPPING_QUOTE_URL` and/or `COMMERCE_ORDER_WEBHOOK_URL` plus `INTEGRATION_WEBHOOK_SECRET` when external fulfillment is enabled.
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PRO` and `STRIPE_PRICE_BUSINESS` when paid plans are enabled. Register `/api/webhooks/stripe` for Checkout and subscription events.
 
 Provider credentials are external activation inputs. The server refuses mandatory email verification when no email provider is configured and never returns a secret through its status APIs.
+
+Production startup refuses missing persistent PostgreSQL, disabled account protection,
+an HTTP/non-origin public URL, a missing/short encryption key, disabled rate limits,
+or mandatory email verification without a sender. Error messages name only configuration
+keys, never their values. Existing deployment secrets are not changed by the code.
+
+The production container disables raw Uvicorn access logging and uses sanitized JSON
+route logs instead; OAuth codes, reset links and webhook verify tokens must not be
+written as raw URLs. A custom server command must also use `--no-access-log`.
 
 ## Release gate
 
@@ -31,11 +41,73 @@ After deploy, verify:
 4. Register/login, widget chat, human takeover and one provider webhook are exercised in the target environment.
 5. When billing is enabled, complete a Stripe test-mode checkout, open Customer Portal and confirm the signed webhook updates the workspace plan.
 
+CI runs the complete tests on SQLite and PostgreSQL 16, scans runtime dependencies
+with pip-audit and builds/runs the Docker image through the browser suite. Browser
+tests create disposable local users/products, not real customers or Facebook posts.
+
+## Infrastructure gate before public launch
+
+The current Render Free deployment is a pilot, not an always-on customer service.
+Free web instances sleep after 15 minutes without traffic and Free PostgreSQL expires
+after 30 days. See https://render.com/docs/free. Keep the provided Render HTTPS
+hostname if a custom domain is not needed; purchasing a domain is not required.
+
+Before inviting actual customers:
+
+1. Select an always-on server and a non-expiring PostgreSQL plan. This requires the
+   owner's approval for any paid subscription; do not upgrade automatically.
+2. Enable daily database backups, retention and an alert for failed backups. Restore
+   a backup into a separate non-production database and verify tenants, messages,
+   orders and encrypted Page connections. A backup is not proven until a restore is tested.
+3. Configure Resend and a verified sender, exercise reset/verification delivery, then
+   enable email verification before opening unrestricted signup. A temporary pilot
+   can set `REGISTRATION_ENABLED=false` and keep existing accounts working.
+4. Complete Meta review/Advanced Access where required; test a genuine inbound and
+   outbound message for an authorized Page. A green configuration badge is not a
+   delivery receipt. Keep tokens and customer screenshots out of public evidence.
+5. Exercise provider timeout/retry, a restart and the expected simultaneous-user load
+   in a staging environment. This release's tests are not a load/SLA guarantee.
+6. Do not enable paid plans until seat enforcement, stale/out-of-order billing-event
+   handling and operator support controls have their own release gate.
+
+The platform currently provides tenant owners/managers/agents, not a global
+administrator console. No public-launch sign-off should imply that console exists.
+
+## AI usage and fallback
+
+Free is limited to 500 new assistant/copilot turns per UTC calendar month, Pro to
+10,000 and Business to 50,000. One turn can include several model tool-loop calls;
+this is not a token or dollar billing meter. The database reserves a turn atomically
+across processes. Retries of a stored Messenger reply reuse it without reserving a
+second turn. Deterministic confirmation/cancellation of an existing draft remains
+available after quota exhaustion, and human replies do not use this budget.
+
+Exhaustion pauses AI for that channel conversation and hands off to staff. At a new
+month or after a valid plan upgrade, staff can re-enable AI in the inbox. Canceled,
+unpaid or unknown plans use Free limits. Seat counts are explicitly marked as
+provisional; there is no implemented seat limit yet.
+
+Model generation has a 30-second total turn budget and a grounded fallback. Jobs
+have a 90-second processing timeout and shutdown waits at most 10 seconds before
+cancelling work; the durable running job is recoverable on a subsequent worker tick.
+Readiness returns 503 for failed database access or a dead worker, and reports
+`degraded=true` for dead-letter jobs without forcing endless service restarts.
+
 ## Queue recovery
 
 Messenger and confirmed-order deliveries are persisted in `jobs`. A worker retries failures with backoff. A job that exhausts its attempts moves to `failed` and remains visible in health/metrics. Diagnose the provider/credential first, then create a fresh delivery event or requeue the job through an approved operations procedure; do not edit customer messages or order payloads to hide the failure.
 
-Running jobs older than five minutes are automatically returned to `queued` on worker startup. Provider event IDs and order IDs are dedupe keys, so a retry cannot create two replies or two fulfillment events.
+Running jobs older than five minutes are checked every minute and returned to
+`queued`. Polling failures do not permanently kill the worker. Provider event IDs
+and order IDs deduplicate jobs. A generated channel reply is persisted before
+delivery, so delivery retries do not repeat the AI turn or order action.
+
+Delivery is **at least once**, not exactly once: if Meta accepted a message but the
+response was lost, resending may duplicate the customer-visible reply. A crash
+before persisting the generated reply can also regenerate a model turn. Order
+confirmation is separately protected by an atomic draft claim, conditional stock
+updates and a transaction containing the commerce outbox. External commerce
+receivers must deduplicate by `order_id`.
 
 ## Account recovery
 
