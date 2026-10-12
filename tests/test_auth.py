@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 from types import SimpleNamespace
 
+import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 import app.auth as auth_module
@@ -274,3 +276,98 @@ def test_password_reset_request_does_not_reveal_unknown_email(monkeypatch):
 
     assert response.status_code == 202
     assert response.json() == {"accepted": True}
+
+
+@pytest.mark.parametrize("path", [
+    "/api/auth/password-reset/request", "/api/auth/verify-email/request",
+])
+def test_account_email_unavailable_is_not_reported_as_sent(monkeypatch, path):
+    monkeypatch.setattr(main_module, "email_service", SimpleNamespace(configured=False))
+    with TestClient(app) as client:
+        assert client.post("/api/auth/register", json=REGISTER_PAYLOAD).status_code == 201
+        capability = client.get("/api/auth/me").json()
+        known = client.post(path, json={"email": REGISTER_PAYLOAD["email"]})
+        unknown = client.post(path, json={"email": "missing@example.com"})
+    assert capability["password_reset_available"] is False
+    assert known.status_code == unknown.status_code == 503
+    assert known.json() == unknown.json()
+    assert "accepted" not in known.json()
+
+
+@pytest.mark.parametrize("failure", ["false", "exception"])
+def test_password_reset_provider_failure_keeps_account_existence_private(monkeypatch, caplog, failure):
+    def failed_delivery(*args):
+        if failure == "exception":
+            raise httpx.ConnectError("private provider diagnostics must not be returned")
+        return False
+
+    fake_email = SimpleNamespace(configured=True, send_password_reset=failed_delivery)
+    monkeypatch.setattr(main_module, "email_service", fake_email)
+    with TestClient(app) as client:
+        assert client.post("/api/auth/register", json=REGISTER_PAYLOAD).status_code == 201
+        response = client.post(
+            "/api/auth/password-reset/request", json={"email": REGISTER_PAYLOAD["email"]}
+        )
+        unknown = client.post(
+            "/api/auth/password-reset/request", json={"email": "missing@example.com"}
+        )
+    assert response.status_code == unknown.status_code == 202
+    assert response.json() == unknown.json() == {"accepted": True}
+    assert "private provider" not in response.text
+    assert "Account email delivery failed" in caplog.text
+    assert "private provider" not in caplog.text
+
+
+def test_registration_survives_verification_delivery_failure_and_can_resend(monkeypatch):
+    auth_settings = replace(settings, email_verification_required=True)
+    sent = {}
+    fake_email = SimpleNamespace(configured=True, send_verification=lambda *args: False)
+    monkeypatch.setattr(main_module, "settings", auth_settings)
+    monkeypatch.setattr(auth_module, "settings", auth_settings)
+    monkeypatch.setattr(main_module, "email_service", fake_email)
+    with TestClient(app) as client:
+        registered = client.post("/api/auth/register", json=REGISTER_PAYLOAD)
+        assert registered.status_code == 201
+        assert registered.json()["verification_email_sent"] is False
+        fake_email.send_verification = lambda email, name, token: sent.update(token=token) or True
+        response = client.post(
+            "/api/auth/verify-email/request", json={"email": REGISTER_PAYLOAD["email"]}
+        )
+        confirmed = client.post("/api/auth/verify-email/confirm", json={"token": sent["token"]})
+    assert response.status_code == 202
+    assert confirmed.json() == {"verified": True}
+
+
+def test_registration_non_unique_integrity_errors_are_not_misreported(monkeypatch):
+    import sqlite3
+
+    def fail(*args, **kwargs):
+        raise sqlite3.IntegrityError("NOT NULL constraint failed: shops.category")
+
+    monkeypatch.setattr(main_module.auth_service, "register", fail)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post("/api/auth/register", json=REGISTER_PAYLOAD)
+    assert response.status_code == 500
+
+
+def test_operator_recovery_checks_ownership_and_uses_single_use_link():
+    from scripts.recover_account import issue_recovery_link
+
+    with TestClient(app) as client:
+        client.post("/api/auth/register", json=REGISTER_PAYLOAD)
+        with pytest.raises(ValueError):
+            issue_recovery_link(REGISTER_PAYLOAD["email"], "another-shop", "https://example.com")
+        with pytest.raises(ValueError):
+            issue_recovery_link(REGISTER_PAYLOAD["email"], "cua-hang-test", "http://example.com")
+        link, user_id = issue_recovery_link(
+            REGISTER_PAYLOAD["email"], "cua-hang-test", "https://example.com"
+        )
+        token = link.split("?reset=", 1)[1]
+        payload = {"token": token, "password": "recovered-password-123"}
+        reset = client.post("/api/auth/password-reset/confirm", json=payload)
+        reused = client.post("/api/auth/password-reset/confirm", json=payload)
+        old_session = client.get("/api/auth/me")
+    assert user_id
+    assert reset.status_code == 200
+    assert reused.status_code == 400
+    assert old_session.json()["authenticated"] is False

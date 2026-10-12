@@ -43,6 +43,31 @@ Verification and password-reset tokens are random, hashed at rest, single-use an
 
 If email delivery is unavailable, keep `EMAIL_VERIFICATION_REQUIRED=false` until the provider is restored; do not enable a mandatory flow without a configured sender.
 
+Password reset and verification requests return `503` when account email is not
+configured, for every email address. They must not display a "sent" message for
+these failures. Once a provider is configured, `202` means the request was accepted,
+not that delivery is confirmed. Provider failures are logged without credentials;
+the response remains identical for known and unknown accounts, even when delivery
+fails. `/api/auth/me` exposes the non-secret
+`password_reset_available` capability. Registration with required verification
+preserves the new account when delivery fails and supports resending verification.
+
+For an owner whose identity and shop ownership have been verified through the
+operator's trusted management channel, an operator with production database access
+can issue a 15-minute, single-use reset link without email:
+
+```powershell
+python -m scripts.recover_account --email owner@example.com --expected-shop shop-slug --base-url https://your-production-host --reason "Verified owner support request" --issue-reset-link
+```
+
+Supply `DATABASE_URL` in the operator environment (or through standard input with
+`--database-url-stdin`), never as a command-line argument or a committed file.
+The command checks the existing active account's Owner membership. It does not
+create accounts, alter roles or reveal the old password. The reset link is secret;
+keep it out of logs and screenshots. Completing it uses the normal password-reset
+endpoint and revokes previous sessions. Record the operator's audit event from
+stderr in the incident record.
+
 ## Connector contract
 
 Shipping and commerce payloads are canonical JSON. Verify `X-ShopPilot-Signature` as `sha256=<HMAC-SHA256(raw_body, INTEGRATION_WEBHOOK_SECRET)>` before accepting a request. Return a 2xx response only after the downstream system durably accepts the event.

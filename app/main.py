@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import json
+import logging
 import secrets
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -25,7 +26,7 @@ from app.channels.meta import MetaMessengerAdapter
 from app.channels.web import WebChannelAdapter
 from app.config import BASE_DIR, settings
 from app.copilot import inbox_copilot
-from app.database import init_database, is_integrity_error, using_postgres
+from app.database import init_database, is_integrity_error, is_unique_violation, using_postgres
 from app.email_service import email_service
 from app.inbox import inbox_service
 from app.jobs import job_worker
@@ -58,6 +59,27 @@ from app.schemas import (
 )
 from app.seed import seed_demo_data
 from app.token_crypto import decrypt_secret
+
+logger = logging.getLogger("shoppilot.accounts")
+
+
+def send_account_email(deliver, *args) -> bool:
+    """Keep provider failures out of account transactions and public error details."""
+    try:
+        if deliver(*args):
+            return True
+    except httpx.HTTPError:
+        pass
+    logger.warning("Account email delivery failed; check the email provider configuration.")
+    return False
+
+
+def require_account_email() -> None:
+    if not email_service.configured:
+        raise HTTPException(
+            status_code=503,
+            detail="Khôi phục qua email chưa được bật. Vui lòng liên hệ quản trị viên ShopPilot.",
+        )
 
 
 @asynccontextmanager
@@ -126,6 +148,7 @@ def auth_me(request: Request) -> dict:
         "authenticated": bool(user),
         "auth_required": settings.auth_required,
         "registration_enabled": settings.registration_enabled,
+        "password_reset_available": email_service.configured,
         "user": user,
         "shops": repository.list_user_shops(user["id"]) if user else [],
     }
@@ -156,23 +179,28 @@ def register_account(payload: RegisterRequest, request: Request, response: Respo
             status_code=409, detail="Email hoặc mã cửa hàng đã được sử dụng."
         ) from exc
     except Exception as exc:
-        if not is_integrity_error(exc):
+        if not is_unique_violation(exc):
             raise
         raise HTTPException(
             status_code=409, detail="Email hoặc mã cửa hàng đã được sử dụng."
         ) from exc
     verification_required = settings.email_verification_required
+    verification_email_sent = False
     if verification_required:
         verification_token = auth_service.issue_account_token(
             user["id"], "verify_email", settings.verification_token_minutes
         )
-        email_service.send_verification(user["email"], user["display_name"], verification_token)
+        verification_email_sent = send_account_email(
+            email_service.send_verification,
+            user["email"], user["display_name"], verification_token,
+        )
     elif token:
         auth_service.set_session_cookie(response, token)
     return {
         "user": user,
         "shops": repository.list_user_shops(user["id"]),
         "verification_required": verification_required,
+        "verification_email_sent": verification_email_sent,
     }
 
 
@@ -202,12 +230,15 @@ def request_email_verification(payload: AccountEmailRequest, request: Request) -
         request, "auth", settings.auth_rate_limit_requests,
         settings.auth_rate_limit_window_seconds, enabled=settings.rate_limit_enabled,
     )
+    require_account_email()
     user = repository.get_user_by_email(payload.email.strip().casefold())
-    if user and not repository.is_email_verified(user["id"]) and email_service.configured:
+    if user and not repository.is_email_verified(user["id"]):
         token = auth_service.issue_account_token(
             user["id"], "verify_email", settings.verification_token_minutes
         )
-        email_service.send_verification(user["email"], user["display_name"], token)
+        send_account_email(
+            email_service.send_verification, user["email"], user["display_name"], token
+        )
     return {"accepted": True}
 
 
@@ -225,12 +256,15 @@ def request_password_reset(payload: AccountEmailRequest, request: Request) -> di
         request, "auth", settings.auth_rate_limit_requests,
         settings.auth_rate_limit_window_seconds, enabled=settings.rate_limit_enabled,
     )
+    require_account_email()
     user = repository.get_user_by_email(payload.email.strip().casefold())
-    if user and email_service.configured:
+    if user:
         token = auth_service.issue_account_token(
             user["id"], "password_reset", settings.password_reset_token_minutes
         )
-        email_service.send_password_reset(user["email"], user["display_name"], token)
+        send_account_email(
+            email_service.send_password_reset, user["email"], user["display_name"], token
+        )
     return {"accepted": True}
 
 
