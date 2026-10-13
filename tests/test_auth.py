@@ -170,12 +170,8 @@ def test_required_email_verification_blocks_login_until_confirmed(monkeypatch):
                 "password": REGISTER_PAYLOAD["password"],
             },
         )
-        confirmed = client.post(
-            "/api/auth/verify-email/confirm", json={"token": sent["token"]}
-        )
-        reused = client.post(
-            "/api/auth/verify-email/confirm", json={"token": sent["token"]}
-        )
+        confirmed = client.post("/api/auth/verify-email/confirm", json={"token": sent["token"]})
+        reused = client.post("/api/auth/verify-email/confirm", json={"token": sent["token"]})
         logged_in = client.post(
             "/api/auth/login",
             json={
@@ -208,6 +204,7 @@ def test_restart_does_not_auto_verify_a_new_unverified_account(monkeypatch):
         registered = client.post("/api/auth/register", json=REGISTER_PAYLOAD)
         assert registered.status_code == 201
         from app.database import init_database
+
         init_database()
         blocked = client.post(
             "/api/auth/login",
@@ -278,9 +275,13 @@ def test_password_reset_request_does_not_reveal_unknown_email(monkeypatch):
     assert response.json() == {"accepted": True}
 
 
-@pytest.mark.parametrize("path", [
-    "/api/auth/password-reset/request", "/api/auth/verify-email/request",
-])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/auth/password-reset/request",
+        "/api/auth/verify-email/request",
+    ],
+)
 def test_account_email_unavailable_is_not_reported_as_sent(monkeypatch, path):
     monkeypatch.setattr(main_module, "email_service", SimpleNamespace(configured=False))
     with TestClient(app) as client:
@@ -295,7 +296,9 @@ def test_account_email_unavailable_is_not_reported_as_sent(monkeypatch, path):
 
 
 @pytest.mark.parametrize("failure", ["false", "exception"])
-def test_password_reset_provider_failure_keeps_account_existence_private(monkeypatch, caplog, failure):
+def test_password_reset_provider_failure_keeps_account_existence_private(
+    monkeypatch, caplog, failure
+):
     def failed_delivery(*args):
         if failure == "exception":
             raise httpx.ConnectError("private provider diagnostics must not be returned")
@@ -371,3 +374,46 @@ def test_operator_recovery_checks_ownership_and_uses_single_use_link():
     assert reset.status_code == 200
     assert reused.status_code == 400
     assert old_session.json()["authenticated"] is False
+
+
+def test_authenticated_user_can_change_password_and_keep_only_new_session():
+    other_session = TestClient(app)
+    with TestClient(app) as client:
+        client.post("/api/auth/register", json=REGISTER_PAYLOAD)
+        assert (
+            other_session.post(
+                "/api/auth/login",
+                json={"email": REGISTER_PAYLOAD["email"], "password": REGISTER_PAYLOAD["password"]},
+            ).status_code
+            == 200
+        )
+        wrong = client.post(
+            "/api/auth/password/change",
+            json={"current_password": "wrong", "new_password": "new-password-456"},
+        )
+        changed = client.post(
+            "/api/auth/password/change",
+            json={
+                "current_password": REGISTER_PAYLOAD["password"],
+                "new_password": "new-password-456",
+            },
+        )
+        assert wrong.status_code == 401
+        assert changed.json() == {"changed": True}
+        assert client.get("/api/auth/me").json()["authenticated"] is True
+        assert other_session.get("/api/auth/me").json()["authenticated"] is False
+        assert (
+            client.post(
+                "/api/auth/password/change",
+                json={"current_password": "new-password-456", "new_password": "new-password-456"},
+            ).status_code
+            == 400
+        )
+    other_session.close()
+
+
+def test_account_page_requires_login():
+    with TestClient(app) as client:
+        assert client.get("/account").status_code == 401
+        client.post("/api/auth/register", json=REGISTER_PAYLOAD)
+        assert client.get("/account").status_code == 200

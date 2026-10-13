@@ -6,7 +6,6 @@ import re
 import time
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 import httpx
 
@@ -42,17 +41,25 @@ class StripeBillingService:
     def create_checkout(self, *, shop: dict[str, Any], user: dict[str, Any], plan: str) -> str:
         existing = self.repo.get_shop_subscription(shop["id"])
         if existing.get("stripe_subscription_id") and existing["status"] in {
-            "active", "trialing", "past_due", "unpaid", "paused", "incomplete",
+            "active",
+            "trialing",
+            "past_due",
+            "unpaid",
+            "paused",
+            "incomplete",
         }:
             raise ValueError("Workspace đã có subscription. Đổi gói trong cổng quản lý thanh toán.")
         price_id = self.price_id(plan)
         if not self.config.stripe_secret_key or not price_id:
             raise RuntimeError("Gói thanh toán này chưa được cấu hình trên Stripe.")
+        idempotency_key, cached_url = self.repo.reserve_billing_checkout(shop["id"], plan)
+        if cached_url:
+            return cached_url
         base_url = self.config.public_base_url.rstrip("/")
         response = httpx.post(
             "https://api.stripe.com/v1/checkout/sessions",
             auth=(self.config.stripe_secret_key, ""),
-            headers={"Idempotency-Key": f"checkout-{shop['id']}-{plan}-{uuid4()}"},
+            headers={"Idempotency-Key": idempotency_key},
             data={
                 "mode": "subscription",
                 "customer_email": user["email"],
@@ -68,7 +75,9 @@ class StripeBillingService:
             timeout=20,
         )
         response.raise_for_status()
-        return response.json()["url"]
+        url = response.json()["url"]
+        self.repo.complete_billing_checkout(shop["id"], idempotency_key, url)
+        return url
 
     def create_portal(self, customer_id: str) -> str:
         if not self.config.stripe_secret_key:
@@ -111,7 +120,8 @@ class StripeBillingService:
             raise RuntimeError("Stripe is not fully configured")
         event_type = event.get("type", "")
         if event_type not in {
-            "checkout.session.completed", "checkout.session.async_payment_succeeded",
+            "checkout.session.completed",
+            "checkout.session.async_payment_succeeded",
             "checkout.session.async_payment_failed",
             "customer.subscription.created",
             "customer.subscription.updated",
@@ -127,10 +137,14 @@ class StripeBillingService:
             raise ValueError("Invalid event ID")
         if not isinstance(obj, dict):
             raise TypeError("Invalid event object")
-        subscription_id = obj.get("subscription") if event_type.startswith("checkout.") else obj.get("id")
+        subscription_id = (
+            obj.get("subscription") if event_type.startswith("checkout.") else obj.get("id")
+        )
         if event_type.startswith("checkout.") and not subscription_id:
             return False  # A payment-mode Checkout does not grant SaaS entitlements.
-        if not isinstance(subscription_id, str) or not re.fullmatch(r"sub_[A-Za-z0-9_]{1,200}", subscription_id):
+        if not isinstance(subscription_id, str) or not re.fullmatch(
+            r"sub_[A-Za-z0-9_]{1,200}", subscription_id
+        ):
             raise ValueError("Invalid subscription ID")
         metadata = obj.get("metadata") or {}
         if not isinstance(metadata, dict):
@@ -149,14 +163,17 @@ class StripeBillingService:
         # then commit only if no newer refresh has started for this workspace.
         response = httpx.get(
             f"https://api.stripe.com/v1/subscriptions/{subscription_id}",
-            auth=(self.config.stripe_secret_key, ""), timeout=10,
+            auth=(self.config.stripe_secret_key, ""),
+            timeout=10,
         )
         response.raise_for_status()
         canonical = response.json()
         if not isinstance(canonical, dict) or canonical.get("id") != subscription_id:
             raise ValueError("Invalid canonical subscription")
         canonical_metadata = canonical.get("metadata") or {}
-        if not isinstance(canonical_metadata, dict) or str(canonical_metadata.get("shop_id")) != str(shop_id):
+        if not isinstance(canonical_metadata, dict) or str(
+            canonical_metadata.get("shop_id")
+        ) != str(shop_id):
             raise ValueError("Subscription ownership does not match")
         container = canonical.get("items")
         if not isinstance(container, dict):
@@ -171,18 +188,34 @@ class StripeBillingService:
         if plan is None:
             raise ValueError("Unknown ShopPilot price")
         status = canonical.get("status")
-        if status not in {"active", "trialing", "past_due", "unpaid", "paused",
-                          "incomplete", "incomplete_expired", "canceled"}:
+        if status not in {
+            "active",
+            "trialing",
+            "past_due",
+            "unpaid",
+            "paused",
+            "incomplete",
+            "incomplete_expired",
+            "canceled",
+        }:
             raise ValueError("Invalid subscription status")
         period_end = canonical.get("current_period_end") or items[0].get("current_period_end")
         snapshot = {
-            "id": subscription_id, "created": int(canonical["created"]), "plan": plan,
-            "status": status, "customer": canonical["customer"],
+            "id": subscription_id,
+            "created": int(canonical["created"]),
+            "plan": plan,
+            "status": status,
+            "customer": canonical["customer"],
             "current_period_end": datetime.fromtimestamp(int(period_end), UTC).isoformat()
-            if period_end else None,
+            if period_end
+            else None,
         }
         return self.repo.apply_billing_refresh(
-            shop_id, event_id, event_type, revision, snapshot,
+            shop_id,
+            event_id,
+            event_type,
+            revision,
+            snapshot,
         )
 
 

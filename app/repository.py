@@ -41,8 +41,17 @@ def _json_contains_exact(value: Any, needle: str) -> bool:
 
 
 BUYING_SIGNALS = (
-    "mua", "chốt", "đặt", "lấy", "còn hàng", "còn size", "giá bao nhiêu",
-    "phí ship", "giao hàng", "thanh toán", "tư vấn",
+    "mua",
+    "chốt",
+    "đặt",
+    "lấy",
+    "còn hàng",
+    "còn size",
+    "giá bao nhiêu",
+    "phí ship",
+    "giao hàng",
+    "thanh toán",
+    "tư vấn",
 )
 
 
@@ -52,20 +61,31 @@ class SeatLimitReached(ValueError):
 
 def _seat_limits(connection: Any, shop_id: int, now: str) -> dict:
     subscription = connection.execute(
-        "SELECT plan, status FROM shop_subscriptions WHERE shop_id = ?", (shop_id,),
+        "SELECT plan, status FROM shop_subscriptions WHERE shop_id = ?",
+        (shop_id,),
     ).fetchone()
     trial = connection.execute(
-        "SELECT plan FROM shop_plan_trials WHERE shop_id = ? AND expires_at > ?", (shop_id, now),
+        "SELECT plan FROM shop_plan_trials WHERE shop_id = ? AND expires_at > ?",
+        (shop_id, now),
     ).fetchone()
-    plan = effective_plan(dict(subscription) if subscription else {}, dict(trial) if trial else None)
-    members = connection.execute("SELECT COUNT(*) FROM shop_members WHERE shop_id = ?",
-                                 (shop_id,)).fetchone()[0]
+    plan = effective_plan(
+        dict(subscription) if subscription else {}, dict(trial) if trial else None
+    )
+    members = connection.execute(
+        "SELECT COUNT(*) FROM shop_members WHERE shop_id = ?", (shop_id,)
+    ).fetchone()[0]
     pending = connection.execute(
         "SELECT COUNT(*) FROM shop_invitations WHERE shop_id = ? "
-        "AND accepted_at IS NULL AND expires_at > ?", (shop_id, now),
+        "AND accepted_at IS NULL AND expires_at > ?",
+        (shop_id, now),
     ).fetchone()[0]
-    return {"plan": plan, "limit": PLANS[plan]["seats"], "members": members, "pending": pending,
-            "remaining": max(0, PLANS[plan]["seats"] - members - pending)}
+    return {
+        "plan": plan,
+        "limit": PLANS[plan]["seats"],
+        "members": members,
+        "pending": pending,
+        "remaining": max(0, PLANS[plan]["seats"] - members - pending),
+    }
 
 
 def _inbox_attention(item: dict[str, Any]) -> dict[str, Any]:
@@ -122,22 +142,27 @@ def _inbox_sort_key(item: dict[str, Any]) -> tuple[int, float]:
 class Repository:
     def is_platform_admin(self, user_id: str) -> bool:
         with db_session() as connection:
-            return bool(connection.execute(
-                "SELECT 1 FROM platform_admins a JOIN users u ON u.id = a.user_id "
-                "WHERE a.user_id = ? AND u.status = 'active'", (user_id,),
-            ).fetchone())
+            return bool(
+                connection.execute(
+                    "SELECT 1 FROM platform_admins a JOIN users u ON u.id = a.user_id "
+                    "WHERE a.user_id = ? AND u.status = 'active'",
+                    (user_id,),
+                ).fetchone()
+            )
 
     def grant_platform_admin(self, email: str, reason: str) -> str:
         with db_session() as connection:
             user = connection.execute(
                 "SELECT u.id FROM users u JOIN user_email_status v ON v.user_id = u.id "
-                "WHERE u.email = ? AND u.status = 'active'", (email.strip().casefold(),),
+                "WHERE u.email = ? AND u.status = 'active'",
+                (email.strip().casefold(),),
             ).fetchone()
             if not user:
                 raise ValueError("Existing active verified account is required")
             connection.execute(
                 "INSERT INTO platform_admins (user_id, granted_at, reason) VALUES (?, ?, ?) "
-                "ON CONFLICT(user_id) DO NOTHING", (user["id"], utc_now(), reason),
+                "ON CONFLICT(user_id) DO NOTHING",
+                (user["id"], utc_now(), reason),
             )
             connection.execute(
                 "INSERT INTO platform_audit (id, actor_id, action, target_id, reason, created_at) "
@@ -194,8 +219,13 @@ class Repository:
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        shop["slug"], shop["name"], shop["category"], shop["tagline"],
-                        shop["policy_text"], shop["voice"], now,
+                        shop["slug"],
+                        shop["name"],
+                        shop["category"],
+                        shop["tagline"],
+                        shop["policy_text"],
+                        shop["voice"],
+                        now,
                     ),
                 )
                 shop_id = cursor.lastrowid
@@ -211,16 +241,12 @@ class Repository:
 
     def get_user_by_email(self, email: str) -> dict[str, Any] | None:
         with db_session() as connection:
-            row = connection.execute(
-                "SELECT * FROM users WHERE email = ?", (email,)
-            ).fetchone()
+            row = connection.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
             return row_to_dict(row)
 
     def get_user_by_id(self, user_id: str) -> dict[str, Any] | None:
         with db_session() as connection:
-            row = connection.execute(
-                "SELECT * FROM users WHERE id = ?", (user_id,)
-            ).fetchone()
+            row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
             return row_to_dict(row)
 
     def is_email_verified(self, user_id: str) -> bool:
@@ -415,7 +441,8 @@ class Repository:
                 raise ValueError("User is already a member")
             renewing = connection.execute(
                 "SELECT 1 FROM shop_invitations WHERE shop_id = ? AND email = ? "
-                "AND accepted_at IS NULL AND expires_at > ?", (shop_id, email, now),
+                "AND accepted_at IS NULL AND expires_at > ?",
+                (shop_id, email, now),
             ).fetchone()
             seats = _seat_limits(connection, shop_id, now)
             if seats["members"] + seats["pending"] - int(bool(renewing)) >= seats["limit"]:
@@ -471,7 +498,9 @@ class Repository:
             ).fetchone()
             if not invitation or not user or user["email"] != invitation["email"]:
                 return None
-            connection.execute("UPDATE shops SET slug = slug WHERE id = ?", (invitation["shop_id"],))
+            connection.execute(
+                "UPDATE shops SET slug = slug WHERE id = ?", (invitation["shop_id"],)
+            )
             member = connection.execute(
                 "SELECT 1 FROM shop_members WHERE shop_id = ? AND user_id = ?",
                 (invitation["shop_id"], user_id),
@@ -603,16 +632,25 @@ class Repository:
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    data["slug"], data["name"], data["category"], data["tagline"],
-                    data["policy_text"], data["voice"], utc_now(),
+                    data["slug"],
+                    data["name"],
+                    data["category"],
+                    data["tagline"],
+                    data["policy_text"],
+                    data["voice"],
+                    utc_now(),
                 ),
             )
-            row = connection.execute("SELECT * FROM shops WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM shops WHERE id = ?", (cursor.lastrowid,)
+            ).fetchone()
             return dict(row)
 
     def update_shop(self, shop_id: int, data: dict[str, Any]) -> dict[str, Any]:
         allowed = {"name", "category", "tagline", "policy_text", "voice"}
-        updates = {key: value for key, value in data.items() if key in allowed and value is not None}
+        updates = {
+            key: value for key, value in data.items() if key in allowed and value is not None
+        }
         if not updates:
             shop = self.get_shop_by_id(shop_id)
             if not shop:
@@ -656,12 +694,19 @@ class Repository:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    shop_id, data["sku"], data["name"], data["category"],
-                    data["description"], data["price"], data["stock"],
+                    shop_id,
+                    data["sku"],
+                    data["name"],
+                    data["category"],
+                    data["description"],
+                    data["price"],
+                    data["stock"],
                     json_dumps(data.get("attributes", {})),
                 ),
             )
-            row = connection.execute("SELECT * FROM products WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM products WHERE id = ?", (cursor.lastrowid,)
+            ).fetchone()
             return _hydrate_product(row)
 
     def update_product(self, shop_id: int, product_id: int, data: dict) -> dict | None:
@@ -671,9 +716,18 @@ class Repository:
                 UPDATE products SET sku = ?, name = ?, category = ?, description = ?,
                     price = ?, stock = ?, attributes_json = ?
                 WHERE shop_id = ? AND id = ? AND active = 1 RETURNING *
-                """, (data["sku"], data["name"], data["category"], data["description"],
-                      data["price"], data["stock"], json_dumps(data.get("attributes", {})),
-                      shop_id, product_id),
+                """,
+                (
+                    data["sku"],
+                    data["name"],
+                    data["category"],
+                    data["description"],
+                    data["price"],
+                    data["stock"],
+                    json_dumps(data.get("attributes", {})),
+                    shop_id,
+                    product_id,
+                ),
             ).fetchone()
             return _hydrate_product(row) if row else None
 
@@ -732,9 +786,7 @@ class Repository:
             fields.append("pending_action_json = NULL")
         values.append(conversation_id)
         with db_session() as connection:
-            connection.execute(
-                f"UPDATE conversations SET {', '.join(fields)} WHERE id = ?", values
-            )
+            connection.execute(f"UPDATE conversations SET {', '.join(fields)} WHERE id = ?", values)
 
     def add_message(
         self,
@@ -789,8 +841,13 @@ class Repository:
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    conversation_id, tool_name, json_dumps(arguments), json_dumps(result),
-                    duration_ms, int(success), utc_now(),
+                    conversation_id,
+                    tool_name,
+                    json_dumps(arguments),
+                    json_dumps(result),
+                    duration_ms,
+                    int(success),
+                    utc_now(),
                 ),
             )
 
@@ -927,11 +984,13 @@ class Repository:
         with db_session() as connection:
             connection.execute(
                 "INSERT INTO shop_ai_usage (shop_id, period, used) VALUES (?, ?, 0) "
-                "ON CONFLICT(shop_id, period) DO NOTHING", (shop_id, period),
+                "ON CONFLICT(shop_id, period) DO NOTHING",
+                (shop_id, period),
             )
             cursor = connection.execute(
                 "UPDATE shop_ai_usage SET used = used + 1 "
-                "WHERE shop_id = ? AND period = ? AND used < ?", (shop_id, period, limit),
+                "WHERE shop_id = ? AND period = ? AND used < ?",
+                (shop_id, period, limit),
             )
             return cursor.rowcount == 1
 
@@ -949,33 +1008,88 @@ class Repository:
     def begin_billing_refresh(self, shop_id: int, event_id: str) -> int | None:
         with db_session() as connection:
             connection.execute("UPDATE shops SET slug = slug WHERE id = ?", (shop_id,))
-            if connection.execute("SELECT 1 FROM stripe_event_receipts WHERE event_id = ?",
-                                  (event_id,)).fetchone():
+            if connection.execute(
+                "SELECT 1 FROM stripe_event_receipts WHERE event_id = ?", (event_id,)
+            ).fetchone():
                 return None
             row = connection.execute(
                 "INSERT INTO billing_revisions (shop_id, revision) VALUES (?, 1) "
                 "ON CONFLICT(shop_id) DO UPDATE SET revision = billing_revisions.revision + 1 "
-                "RETURNING revision", (shop_id,),
+                "RETURNING revision",
+                (shop_id,),
             ).fetchone()
             return row["revision"]
 
-    def apply_billing_refresh(self, shop_id: int, event_id: str, event_type: str,
-                              revision: int, subscription: dict) -> bool:
+    def reserve_billing_checkout(self, shop_id: int, plan: str) -> tuple[str, str | None]:
+        now = utc_now()
+        expires_at = (datetime.now(UTC) + timedelta(hours=23)).isoformat()
+        with db_session() as connection:
+            locked = connection.execute("UPDATE shops SET slug = slug WHERE id = ?", (shop_id,))
+            if locked.rowcount != 1:
+                raise ValueError("Unknown billing workspace")
+            current = connection.execute(
+                "SELECT * FROM billing_checkout_attempts WHERE shop_id = ? AND expires_at > ?",
+                (shop_id, now),
+            ).fetchone()
+            # One workspace can have only one live Checkout. Reuse its Stripe
+            # idempotency key even if two tabs selected different plans.
+            if current:
+                return current["idempotency_key"], current["checkout_url"]
+            key = f"checkout-{shop_id}-{uuid4()}"
+            connection.execute(
+                """
+                INSERT INTO billing_checkout_attempts
+                    (shop_id, plan, idempotency_key, checkout_url, expires_at, created_at)
+                VALUES (?, ?, ?, NULL, ?, ?) ON CONFLICT(shop_id) DO UPDATE SET
+                    plan = excluded.plan, idempotency_key = excluded.idempotency_key,
+                    checkout_url = NULL, expires_at = excluded.expires_at,
+                    created_at = excluded.created_at
+                """,
+                (shop_id, plan, key, expires_at, now),
+            )
+            return key, None
+
+    def complete_billing_checkout(self, shop_id: int, idempotency_key: str, url: str) -> None:
+        with db_session() as connection:
+            changed = connection.execute(
+                "UPDATE billing_checkout_attempts SET checkout_url = ? "
+                "WHERE shop_id = ? AND idempotency_key = ?",
+                (url, shop_id, idempotency_key),
+            )
+            if changed.rowcount != 1:
+                raise RuntimeError("Billing checkout reservation expired")
+
+    def clear_billing_checkout(self, shop_id: int) -> None:
+        with db_session() as connection:
+            connection.execute(
+                "DELETE FROM billing_checkout_attempts WHERE shop_id = ?", (shop_id,)
+            )
+
+    def apply_billing_refresh(
+        self, shop_id: int, event_id: str, event_type: str, revision: int, subscription: dict
+    ) -> bool:
         with db_session() as connection:
             connection.execute("UPDATE shops SET slug = slug WHERE id = ?", (shop_id,))
-            if connection.execute("SELECT 1 FROM stripe_event_receipts WHERE event_id = ?",
-                                  (event_id,)).fetchone():
+            if connection.execute(
+                "SELECT 1 FROM stripe_event_receipts WHERE event_id = ?", (event_id,)
+            ).fetchone():
                 return False
-            latest = connection.execute("SELECT revision FROM billing_revisions WHERE shop_id = ?",
-                                         (shop_id,)).fetchone()
+            latest = connection.execute(
+                "SELECT revision FROM billing_revisions WHERE shop_id = ?", (shop_id,)
+            ).fetchone()
             if not latest or latest["revision"] != revision:
                 raise RuntimeError("A newer subscription refresh is in progress; retry this event")
-            binding = connection.execute("SELECT * FROM billing_subscription_bindings WHERE shop_id = ?",
-                                          (shop_id,)).fetchone()
-            outdated = bool(binding and binding["subscription_id"] != subscription["id"]
-                            and binding["started_at"] >= subscription["created"])
+            binding = connection.execute(
+                "SELECT * FROM billing_subscription_bindings WHERE shop_id = ?", (shop_id,)
+            ).fetchone()
+            outdated = bool(
+                binding
+                and binding["subscription_id"] != subscription["id"]
+                and binding["started_at"] >= subscription["created"]
+            )
             if not outdated:
-                connection.execute("""
+                connection.execute(
+                    """
                     INSERT INTO shop_subscriptions (shop_id, plan, status, stripe_customer_id,
                         stripe_subscription_id, current_period_end, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(shop_id) DO UPDATE SET
@@ -983,16 +1097,32 @@ class Repository:
                         stripe_customer_id = excluded.stripe_customer_id,
                         stripe_subscription_id = excluded.stripe_subscription_id,
                         current_period_end = excluded.current_period_end, updated_at = excluded.updated_at
-                """, (shop_id, subscription["plan"], subscription["status"], subscription["customer"],
-                      subscription["id"], subscription["current_period_end"], utc_now()))
-                connection.execute("""
+                """,
+                    (
+                        shop_id,
+                        subscription["plan"],
+                        subscription["status"],
+                        subscription["customer"],
+                        subscription["id"],
+                        subscription["current_period_end"],
+                        utc_now(),
+                    ),
+                )
+                connection.execute(
+                    """
                     INSERT INTO billing_subscription_bindings (shop_id, subscription_id, started_at)
                     VALUES (?, ?, ?) ON CONFLICT(shop_id) DO UPDATE SET
                         subscription_id = excluded.subscription_id, started_at = excluded.started_at
-                """, (shop_id, subscription["id"], subscription["created"]))
+                """,
+                    (shop_id, subscription["id"], subscription["created"]),
+                )
+                connection.execute(
+                    "DELETE FROM billing_checkout_attempts WHERE shop_id = ?", (shop_id,)
+                )
             connection.execute(
                 "INSERT INTO stripe_event_receipts (event_id, shop_id, event_type, applied_at) "
-                "VALUES (?, ?, ?, ?)", (event_id, shop_id, event_type, utc_now()),
+                "VALUES (?, ?, ?, ?)",
+                (event_id, shop_id, event_type, utc_now()),
             )
             return not outdated
 
@@ -1129,8 +1259,13 @@ class Repository:
                     updated_at = excluded.updated_at
                 """,
                 (
-                    shop_id, channel, external_account_id, display_name,
-                    json_dumps(config or {}), now, now,
+                    shop_id,
+                    channel,
+                    external_account_id,
+                    display_name,
+                    json_dumps(config or {}),
+                    now,
+                    now,
                 ),
             )
             row = connection.execute(
@@ -1291,8 +1426,12 @@ class Repository:
                     VALUES (?, ?, ?, ?, ?, 'received', ?)
                     """,
                     (
-                        shop_id, channel, external_event_id, event_type,
-                        json_dumps(payload), utc_now(),
+                        shop_id,
+                        channel,
+                        external_event_id,
+                        event_type,
+                        json_dumps(payload),
+                        utc_now(),
                     ),
                 )
             return True
@@ -1330,7 +1469,8 @@ class Repository:
         with db_session() as connection:
             row = connection.execute(
                 "SELECT result_json FROM channel_event_replies "
-                "WHERE channel = ? AND external_event_id = ?", (channel, event_id),
+                "WHERE channel = ? AND external_event_id = ?",
+                (channel, event_id),
             ).fetchone()
             return json_loads(row["result_json"]) if row else None
 
@@ -1342,7 +1482,8 @@ class Repository:
                     (channel, external_event_id, result_json, created_at)
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT(channel, external_event_id) DO NOTHING
-                """, (channel, event_id, json_dumps(result), utc_now()),
+                """,
+                (channel, event_id, json_dumps(result), utc_now()),
             )
 
     def get_or_create_channel_conversation(
@@ -1385,9 +1526,18 @@ class Repository:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        channel_id, shop_id, connection_id, channel,
-                        external_conversation_id, external_customer_id, customer_name,
-                        internal_id, json_dumps(metadata or {}), now, now, now,
+                        channel_id,
+                        shop_id,
+                        connection_id,
+                        channel,
+                        external_conversation_id,
+                        external_customer_id,
+                        customer_name,
+                        internal_id,
+                        json_dumps(metadata or {}),
+                        now,
+                        now,
+                        now,
                     ),
                 )
                 row = connection.execute(
@@ -1431,8 +1581,14 @@ class Repository:
                 ON CONFLICT(channel_conversation_id, external_message_id) DO NOTHING
                 """,
                 (
-                    channel_conversation_id, external_message_id, direction, sender_type,
-                    content, status, json_dumps(metadata or {}), now,
+                    channel_conversation_id,
+                    external_message_id,
+                    direction,
+                    sender_type,
+                    content,
+                    status,
+                    json_dumps(metadata or {}),
+                    now,
                 ),
             )
             connection.execute(
@@ -1444,12 +1600,14 @@ class Repository:
             )
             if cursor.rowcount == 1:
                 row = connection.execute(
-                    "SELECT * FROM channel_messages WHERE id = ?", (cursor.lastrowid,),
+                    "SELECT * FROM channel_messages WHERE id = ?",
+                    (cursor.lastrowid,),
                 ).fetchone()
             else:
                 row = connection.execute(
                     "SELECT * FROM channel_messages WHERE channel_conversation_id = ? "
-                    "AND external_message_id = ?", (channel_conversation_id, external_message_id),
+                    "AND external_message_id = ?",
+                    (channel_conversation_id, external_message_id),
                 ).fetchone()
             result = dict(row)
             result["metadata"] = json_loads(result.pop("metadata_json"))
@@ -1554,9 +1712,11 @@ class Repository:
                     status = ?, updated_at = ? WHERE id = ?
                 """,
                 (
-                    int(enabled), assigned_to,
+                    int(enabled),
+                    assigned_to,
                     "open" if enabled or assigned_to else "waiting",
-                    utc_now(), conversation_id,
+                    utc_now(),
+                    conversation_id,
                 ),
             )
         return self.get_channel_conversation(conversation_id)
@@ -1610,8 +1770,12 @@ class Repository:
                 VALUES (?, ?, ?, ?, ?, 'generated', ?)
                 """,
                 (
-                    conversation_id, summary, suggested_reply, model,
-                    json_dumps(risk_flags), utc_now(),
+                    conversation_id,
+                    summary,
+                    suggested_reply,
+                    model,
+                    json_dumps(risk_flags),
+                    utc_now(),
                 ),
             )
             row = connection.execute(
@@ -1621,9 +1785,7 @@ class Repository:
             result["risk_flags"] = json_loads(result.pop("risk_flags_json"), [])
             return result
 
-    def mark_copilot_suggestion_used(
-        self, suggestion_id: int, conversation_id: str
-    ) -> bool:
+    def mark_copilot_suggestion_used(self, suggestion_id: int, conversation_id: str) -> bool:
         with db_session() as connection:
             cursor = connection.execute(
                 """
@@ -1765,8 +1927,14 @@ class Repository:
     ) -> bool:
         now = utc_now()
         values = (
-            str(uuid4()), kind, dedupe_key, json_dumps(payload),
-            max_attempts, now, now, now,
+            str(uuid4()),
+            kind,
+            dedupe_key,
+            json_dumps(payload),
+            max_attempts,
+            now,
+            now,
+            now,
         )
 
         def insert(target: Any) -> bool:
@@ -1851,7 +2019,10 @@ class Repository:
                 """,
                 (
                     "failed" if terminal else "queued",
-                    error[:1000], available_at, utc_now(), job_id,
+                    error[:1000],
+                    available_at,
+                    utc_now(),
+                    job_id,
                 ),
             )
 

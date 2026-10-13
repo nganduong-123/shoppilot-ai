@@ -316,6 +316,8 @@ try {
     await client.navigate(`${base}/admin`, '#overview');
     await waitFor(() => client.evaluate(`document.querySelectorAll('#overview article').length===5 && document.querySelectorAll('#admin-users tr').length>=2 && document.querySelector('#admin-error').hidden`), 'platform overview and account list');
     platformChecks.push('platform_overview_and_accounts');
+    await waitFor(() => client.evaluate(`document.querySelectorAll('#readiness article').length===7`), 'platform provider readiness');
+    platformChecks.push('platform_provider_readiness');
     await client.evaluate(`window.prompt=()=> 'Disposable E2E trial approval';document.querySelector('[data-trial]').click()`);
     await waitFor(() => client.evaluate(`document.querySelector('#admin-audit').textContent.includes('shop.trial.pro')`), 'trial action and audit');
     platformChecks.push('platform_trial_and_audit');
@@ -324,6 +326,11 @@ try {
     await client.evaluate(`window.prompt=()=> 'Disposable E2E restore access';document.querySelector('[data-user][data-status="active"]').click()`);
     await waitFor(() => client.evaluate(`document.querySelector('#admin-audit').textContent.includes('user.active')`), 'account access restored');
     platformChecks.push('platform_suspend_restore');
+    await client.navigate(`${base}/account`, '#password-form');
+    await client.evaluate(`{const form=document.querySelector('#password-form');form.elements.current_password.value='e2e-platform-test-password';form.elements.new_password.value='e2e-platform-new-password';form.elements.confirmation.value='e2e-platform-new-password';form.requestSubmit()}`);
+    await waitFor(() => client.evaluate(`document.querySelector('#status').textContent.includes('Đã đổi mật khẩu')`), 'self-service password change');
+    if (!await client.evaluate(`fetch('/api/auth/me').then(r=>r.json()).then(x=>x.authenticated===true)`)) throw new Error('Password change did not preserve the current session');
+    platformChecks.push('account_password_change');
   }
   console.log(JSON.stringify({
     passed: true,

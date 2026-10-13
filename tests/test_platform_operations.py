@@ -82,6 +82,7 @@ def test_owner_is_not_platform_admin_and_public_signup_cannot_elevate_role():
         for path in [
             "/admin",
             "/api/admin/overview",
+            "/api/admin/readiness",
             "/api/admin/users",
             "/api/admin/shops",
             "/api/admin/jobs",
@@ -100,6 +101,19 @@ def test_verified_operator_bootstrap_and_admin_views_never_expose_credentials():
         assert client.get("/api/auth/me").json()["platform_admin"] is True
         assert client.get("/admin").status_code == 200
         assert client.get("/api/admin/overview").json()["users"] == 1
+        readiness = client.get("/api/admin/readiness")
+        assert readiness.status_code == 200
+        assert {item["key"] for item in readiness.json()["checks"]} == {
+            "production",
+            "database",
+            "ai",
+            "email",
+            "meta",
+            "stripe",
+            "fulfillment",
+        }
+        assert "secret" not in readiness.text.casefold()
+        assert "token" not in readiness.text.casefold()
         users = client.get("/api/admin/users")
         assert "password" not in users.text
         assert "token" not in users.text

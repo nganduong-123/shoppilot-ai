@@ -106,6 +106,11 @@ class PasswordResetConfirm(BaseModel):
     password: str = Field(min_length=10, max_length=200)
 
 
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=10, max_length=200)
+
+
 class EvaluationFeedback(BaseModel):
     label: Literal["helpful", "incorrect", "unsafe"]
     note: str | None = Field(default=None, max_length=1000)

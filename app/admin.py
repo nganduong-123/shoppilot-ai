@@ -9,8 +9,12 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.auth import require_user
-from app.config import BASE_DIR
+from app.billing import billing_service
+from app.config import BASE_DIR, settings
 from app.database import db_session, utc_now
+from app.email_service import email_service
+from app.meta_oauth import meta_oauth_service
+from app.production import production_errors
 from app.repository import repository
 
 router = APIRouter()
@@ -67,6 +71,86 @@ def overview(request: Request):
             (datetime.now(UTC).strftime("%Y-%m"),),
         ).fetchone()
     return dict(row)
+
+
+@router.get("/api/admin/readiness")
+def platform_readiness(request: Request):
+    require_admin(request)
+    with db_session() as connection:
+        connected_pages = connection.execute(
+            "SELECT COUNT(*) FROM channel_connections "
+            "WHERE channel = 'messenger' AND status = 'active'"
+        ).fetchone()[0]
+    persistent_database = bool(
+        settings.database_url and settings.database_url.startswith(("postgres://", "postgresql://"))
+    )
+    production_safe = not production_errors(settings)
+    fulfillment_ready = bool(
+        settings.shipping_quote_url
+        and settings.commerce_order_webhook_url
+        and settings.integration_webhook_secret
+    )
+    return {
+        "release": settings.app_version,
+        "checks": [
+            {
+                "key": "production",
+                "label": "Cấu hình máy chủ",
+                "ready": production_safe,
+                "detail": "Các điều kiện bảo mật bắt buộc đã đạt."
+                if production_safe
+                else "Còn cấu hình production chưa đạt.",
+            },
+            {
+                "key": "database",
+                "label": "PostgreSQL bền vững",
+                "ready": persistent_database,
+                "detail": "Đang dùng PostgreSQL."
+                if persistent_database
+                else "Chưa dùng PostgreSQL.",
+            },
+            {
+                "key": "ai",
+                "label": "AI Groq",
+                "ready": bool(settings.groq_api_key),
+                "detail": settings.groq_model
+                if settings.groq_api_key
+                else "Đang dùng rule fallback.",
+            },
+            {
+                "key": "email",
+                "label": "Email tài khoản",
+                "ready": email_service.configured,
+                "detail": "Resend đã cấu hình."
+                if email_service.configured
+                else "Chưa có Resend/sender.",
+            },
+            {
+                "key": "meta",
+                "label": "Facebook Messenger",
+                "ready": meta_oauth_service.configured and connected_pages > 0,
+                "detail": f"{connected_pages} Page đang kết nối."
+                if connected_pages
+                else "Chưa có Page hoạt động.",
+            },
+            {
+                "key": "stripe",
+                "label": "Thanh toán Stripe",
+                "ready": billing_service.configured,
+                "detail": "Checkout/webhook đã cấu hình."
+                if billing_service.configured
+                else "Chưa có Stripe key/price.",
+            },
+            {
+                "key": "fulfillment",
+                "label": "Giao vận/đơn thật",
+                "ready": fulfillment_ready,
+                "detail": "Webhook giao vận và đơn hàng đã cấu hình."
+                if fulfillment_ready
+                else "Đang dùng quy tắc nội bộ; chưa nối hệ thống giao vận.",
+            },
+        ],
+    }
 
 
 @router.get("/api/admin/shops")

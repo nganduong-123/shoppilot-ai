@@ -117,6 +117,15 @@ class AuthService:
         self.repo.update_user_password(account["user_id"], hash_password(new_password))
         return account
 
+    def change_password(self, user_id: str, current_password: str, new_password: str) -> str | None:
+        user = self.repo.get_user_by_id(user_id)
+        if not user or not verify_password(current_password, user["password_hash"]):
+            return None
+        if verify_password(new_password, user["password_hash"]):
+            raise ValueError("New password must be different")
+        self.repo.update_user_password(user_id, hash_password(new_password))
+        return self._new_session(user_id)
+
     def _new_session(self, user_id: str) -> str:
         token = secrets.token_urlsafe(32)
         expires_at = (datetime.now(UTC) + timedelta(days=settings.session_days)).isoformat()
@@ -139,10 +148,7 @@ class AuthService:
             self.repo.delete_auth_session(token_digest(token))
 
     def _public_user(self, user: dict[str, Any]) -> dict[str, Any]:
-        result = {
-            key: user[key]
-            for key in ("id", "email", "display_name", "status", "created_at")
-        }
+        result = {key: user[key] for key in ("id", "email", "display_name", "status", "created_at")}
         result["email_verified"] = self.repo.is_email_verified(user["id"])
         return result
 

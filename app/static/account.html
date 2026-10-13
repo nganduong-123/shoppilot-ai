@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ShopPilot · Tài khoản</title><link rel="stylesheet" href="/static/account.css?v=1.4.0">
+</head>
+<body><main>
+  <a href="/">← Quay lại ShopPilot</a>
+  <section><p>SHOPPILOT ACCOUNT</p><h1>Tài khoản và bảo mật</h1>
+    <div id="identity"></div>
+    <form id="password-form">
+      <label>Mật khẩu hiện tại<input name="current_password" type="password" autocomplete="current-password" required maxlength="200"></label>
+      <label>Mật khẩu mới<input name="new_password" type="password" autocomplete="new-password" required minlength="10" maxlength="200"></label>
+      <label>Nhập lại mật khẩu mới<input name="confirmation" type="password" autocomplete="new-password" required minlength="10" maxlength="200"></label>
+      <button type="submit">Đổi mật khẩu</button>
+    </form>
+    <p id="status" role="status"></p>
+    <small>Đổi mật khẩu sẽ đăng xuất các phiên khác. Phiên trên thiết bị này được cấp lại tự động.</small>
+  </section>
+</main><script src="/static/account.js?v=1.4.0" defer></script></body></html>

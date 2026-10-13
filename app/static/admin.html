@@ -1,13 +1,14 @@
 <!doctype html>
 <html lang="vi">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ShopPilot · Quản trị nền tảng</title><link rel="stylesheet" href="/static/admin.css?v=1.3.0"></head>
+<title>ShopPilot · Quản trị nền tảng</title><link rel="stylesheet" href="/static/admin.css?v=1.4.0"></head>
 <body><main>
   <header><div><p>SHOPPILOT PLATFORM</p><h1>Quản trị nền tảng</h1><p id="admin-account"></p></div>
   <nav><a href="/">Quay lại shop</a><button id="refresh-admin">Làm mới</button></nav></header>
   <p id="admin-error" role="alert" hidden></p>
   <p>Quản trị vận hành, không xem nội dung hội thoại hay bí mật của khách. Mọi thay đổi được lưu audit.</p>
   <section id="overview" class="summary" aria-label="Tổng quan"></section>
+  <section><h2>Mức sẵn sàng để mở cho khách</h2><p>Trạng thái này chỉ cho biết cấu hình đã có; dịch vụ bên ngoài vẫn cần chạy thử thật trước khi bán.</p><div id="readiness" class="readiness"></div></section>
   <section><h2>Shop và gói dịch vụ</h2><div class="scroll"><table><thead><tr><th>Shop</th><th>Thành viên</th><th>Gói</th><th>Dùng thử</th><th>Thao tác</th></tr></thead><tbody id="admin-shops"></tbody></table></div>
     <nav><button id="shops-prev">Trước</button><span id="shops-page"></span><button id="shops-next">Tiếp</button></nav></section>
   <section><h2>Tài khoản</h2><div class="scroll"><table><thead><tr><th>Tên / email</th><th>Trạng thái</th><th>Quyền nền tảng</th><th>Thao tác</th></tr></thead><tbody id="admin-users"></tbody></table></div>
@@ -15,4 +16,4 @@
   <section><h2>Job gửi tin / đồng bộ đơn bị lỗi</h2><p>Chỉ thử lại sau khi đã sửa nguyên nhân. Nền tảng ngoài có thể nhận lại cùng thông điệp.</p>
     <div class="scroll"><table><thead><tr><th>Job</th><th>Loại</th><th>Số lần thử</th><th>Thao tác</th></tr></thead><tbody id="admin-jobs"></tbody></table></div></section>
   <section><h2>Lịch sử quản trị gần đây</h2><div class="scroll"><table><thead><tr><th>Thời gian</th><th>Thao tác</th><th>Đối tượng</th><th>Lý do</th></tr></thead><tbody id="admin-audit"></tbody></table></div></section>
-</main><script src="/static/admin.js?v=1.3.0" defer></script></body></html>
+</main><script src="/static/admin.js?v=1.4.0" defer></script></body></html>

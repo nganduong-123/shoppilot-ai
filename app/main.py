@@ -52,6 +52,7 @@ from app.schemas import (
     MakeMessengerMessage,
     MetaConnectionComplete,
     OrderFulfillmentUpdate,
+    PasswordChangeRequest,
     PasswordResetConfirm,
     ProductCreate,
     RegisterRequest,
@@ -97,12 +98,12 @@ async def lifespan(application: FastAPI):
         seed_demo_data()
     if settings.meta_page_id:
         shop = repository.get_shop(settings.meta_shop_slug)
-        existing = repository.get_channel_connection_by_external(
-            "messenger", settings.meta_page_id
-        )
+        existing = repository.get_channel_connection_by_external("messenger", settings.meta_page_id)
         if shop and not existing:
             repository.upsert_channel_connection(
-                shop["id"], "messenger", settings.meta_page_id,
+                shop["id"],
+                "messenger",
+                settings.meta_page_id,
                 f"Facebook Page {settings.meta_page_id}",
                 {"source": "environment"},
             )
@@ -135,6 +136,12 @@ def index() -> FileResponse:
 @app.get("/login", include_in_schema=False)
 def login_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "login.html")
+
+
+@app.get("/account", include_in_schema=False)
+def account_page(request: Request) -> FileResponse:
+    require_user(request)
+    return FileResponse(STATIC_DIR / "account.html")
 
 
 @app.get("/privacy", include_in_schema=False)
@@ -204,7 +211,9 @@ def register_account(payload: RegisterRequest, request: Request, response: Respo
         )
         verification_email_sent = send_account_email(
             email_service.send_verification,
-            user["email"], user["display_name"], verification_token,
+            user["email"],
+            user["display_name"],
+            verification_token,
         )
     elif token:
         auth_service.set_session_cookie(response, token)
@@ -228,7 +237,9 @@ def login_account(payload: LoginRequest, request: Request, response: Response) -
     try:
         result = auth_service.login(payload.email, payload.password)
     except EmailNotVerifiedError as exc:
-        raise HTTPException(status_code=403, detail="Vui lòng xác minh email trước khi đăng nhập.") from exc
+        raise HTTPException(
+            status_code=403, detail="Vui lòng xác minh email trước khi đăng nhập."
+        ) from exc
     if not result:
         raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng.")
     user, token = result
@@ -239,8 +250,11 @@ def login_account(payload: LoginRequest, request: Request, response: Response) -
 @app.post("/api/auth/verify-email/request", status_code=202)
 def request_email_verification(payload: AccountEmailRequest, request: Request) -> dict:
     enforce_rate_limit(
-        request, "auth", settings.auth_rate_limit_requests,
-        settings.auth_rate_limit_window_seconds, enabled=settings.rate_limit_enabled,
+        request,
+        "auth",
+        settings.auth_rate_limit_requests,
+        settings.auth_rate_limit_window_seconds,
+        enabled=settings.rate_limit_enabled,
     )
     require_account_email()
     user = repository.get_user_by_email(payload.email.strip().casefold())
@@ -258,15 +272,20 @@ def request_email_verification(payload: AccountEmailRequest, request: Request) -
 def confirm_email_verification(payload: AccountTokenRequest) -> dict:
     account = auth_service.confirm_email(payload.token)
     if not account:
-        raise HTTPException(status_code=400, detail="Liên kết xác minh không hợp lệ hoặc đã hết hạn.")
+        raise HTTPException(
+            status_code=400, detail="Liên kết xác minh không hợp lệ hoặc đã hết hạn."
+        )
     return {"verified": True}
 
 
 @app.post("/api/auth/password-reset/request", status_code=202)
 def request_password_reset(payload: AccountEmailRequest, request: Request) -> dict:
     enforce_rate_limit(
-        request, "auth", settings.auth_rate_limit_requests,
-        settings.auth_rate_limit_window_seconds, enabled=settings.rate_limit_enabled,
+        request,
+        "auth",
+        settings.auth_rate_limit_requests,
+        settings.auth_rate_limit_window_seconds,
+        enabled=settings.rate_limit_enabled,
     )
     require_account_email()
     user = repository.get_user_by_email(payload.email.strip().casefold())
@@ -284,8 +303,34 @@ def request_password_reset(payload: AccountEmailRequest, request: Request) -> di
 def confirm_password_reset(payload: PasswordResetConfirm) -> dict:
     account = auth_service.reset_password(payload.token, payload.password)
     if not account:
-        raise HTTPException(status_code=400, detail="Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.")
+        raise HTTPException(
+            status_code=400, detail="Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn."
+        )
     return {"reset": True}
+
+
+@app.post("/api/auth/password/change")
+def change_password(payload: PasswordChangeRequest, request: Request, response: Response) -> dict:
+    enforce_rate_limit(
+        request,
+        "auth",
+        settings.auth_rate_limit_requests,
+        settings.auth_rate_limit_window_seconds,
+        enabled=settings.rate_limit_enabled,
+    )
+    user = require_user(request)
+    try:
+        token = auth_service.change_password(
+            user["id"], payload.current_password, payload.new_password
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail="Mật khẩu mới phải khác mật khẩu hiện tại."
+        ) from exc
+    if not token:
+        raise HTTPException(status_code=401, detail="Mật khẩu hiện tại không đúng.")
+    auth_service.set_session_cookie(response, token)
+    return {"changed": True}
 
 
 @app.post("/api/auth/logout")
@@ -352,12 +397,18 @@ def meta_integration_status(request: Request, shop_slug: str | None = None) -> d
     if shop_slug:
         shop = require_managed_shop(shop_slug, request)
         connections = repository.list_channel_connections(shop["id"], "messenger")
-    usable_connections = [item for item in connections if item["status"] == "active" and (
-        item["config"].get("page_access_token_enc") or (
-            item["external_account_id"] == settings.meta_page_id
-            and MetaMessengerAdapter().configured
+    usable_connections = [
+        item
+        for item in connections
+        if item["status"] == "active"
+        and (
+            item["config"].get("page_access_token_enc")
+            or (
+                item["external_account_id"] == settings.meta_page_id
+                and MetaMessengerAdapter().configured
+            )
         )
-    )]
+    ]
     configured = bool(usable_connections) if shop_slug else MetaMessengerAdapter().configured
     return {
         "configured": configured,
@@ -426,9 +477,9 @@ async def meta_oauth_callback(request: Request, state: str, code: str) -> Redire
         await meta_oauth_service.exchange_code(user["id"], state, code)
     except (ValueError, RuntimeError, httpx.HTTPError):
         return RedirectResponse(
-            "/static/meta-connect.html?error=" + quote(
-                "Không thể kết nối Meta. Kiểm tra quyền Page và thử lại."
-            ), status_code=303
+            "/static/meta-connect.html?error="
+            + quote("Không thể kết nối Meta. Kiểm tra quyền Page và thử lại."),
+            status_code=303,
         )
     return RedirectResponse(f"/static/meta-connect.html?state={quote(state)}", status_code=303)
 
@@ -443,16 +494,16 @@ def meta_oauth_candidates(request: Request, state: str) -> dict:
 
 
 @app.post("/api/shops/{slug}/integrations/meta/complete")
-async def complete_meta_oauth(
-    slug: str, payload: MetaConnectionComplete, request: Request
-) -> dict:
+async def complete_meta_oauth(slug: str, payload: MetaConnectionComplete, request: Request) -> dict:
     shop, user = require_shop_owner(slug, request)
     try:
         connection = await meta_oauth_service.complete(
             user["id"], shop["id"], payload.state, payload.page_id
         )
-        return {key: connection[key] for key in
-                ("id", "shop_id", "channel", "external_account_id", "display_name", "status")}
+        return {
+            key: connection[key]
+            for key in ("id", "shop_id", "channel", "external_account_id", "display_name", "status")
+        }
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
@@ -545,8 +596,12 @@ def get_shop_team(slug: str, request: Request) -> dict:
     team = repository.list_shop_team(shop["id"])
     if membership["role"] != "owner":
         team["invitations"] = []
-    return {**team, "current_user_id": user["id"], "current_role": membership["role"],
-            "seats": repository.seat_limits(shop["id"])}
+    return {
+        **team,
+        "current_user_id": user["id"],
+        "current_role": membership["role"],
+        "seats": repository.seat_limits(shop["id"]),
+    }
 
 
 @app.post("/api/shops/{slug}/team/invitations", status_code=201)
@@ -565,7 +620,9 @@ def invite_shop_member(slug: str, payload: TeamInvitationCreate, request: Reques
             invited_by=user["id"],
         )
     except SeatLimitReached as exc:
-        raise HTTPException(status_code=409, detail="Shop đã hết chỗ cho thành viên ở gói hiện tại.") from exc
+        raise HTTPException(
+            status_code=409, detail="Shop đã hết chỗ cho thành viên ở gói hiện tại."
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail="Email này đã là thành viên của shop.") from exc
     sent = False
@@ -701,6 +758,13 @@ def create_billing_checkout(slug: str, payload: BillingCheckoutRequest, request:
     return {"url": url}
 
 
+@app.post("/api/shops/{slug}/billing/checkout/cancel")
+def cancel_billing_checkout(slug: str, request: Request) -> dict:
+    shop, _, _ = require_shop_role(slug, request, {"owner"})
+    repository.clear_billing_checkout(shop["id"])
+    return {"cancelled": True}
+
+
 @app.post("/api/shops/{slug}/billing/portal")
 def create_billing_portal(slug: str, request: Request) -> dict:
     shop, _, _ = require_shop_role(slug, request, {"owner"})
@@ -739,7 +803,9 @@ async def stripe_webhook(request: Request) -> dict:
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="Sự kiện thanh toán không hợp lệ.") from exc
     except (RuntimeError, httpx.HTTPError) as exc:
-        raise HTTPException(status_code=503, detail="Chưa đồng bộ được subscription; hãy thử lại.") from exc
+        raise HTTPException(
+            status_code=503, detail="Chưa đồng bộ được subscription; hãy thử lại."
+        ) from exc
     return {"received": True, "applied": applied}
 
 
@@ -801,7 +867,8 @@ async def import_products(
                 for key, value in row.items()
                 if key.startswith("attr_") and value
             }
-            product = ProductCreate.model_validate({
+            product = ProductCreate.model_validate(
+                {
                     "sku": row["sku"],
                     "name": row["name"],
                     "category": row["category"],
@@ -809,16 +876,23 @@ async def import_products(
                     "price": int(row["price"]),
                     "stock": int(row["stock"]),
                     "attributes": attributes,
-                })
+                }
+            )
             repository.create_product(shop["id"], product.model_dump())
             imported += 1
         except Exception as exc:
             if not isinstance(exc, ValueError) and not is_unique_violation(exc):
                 raise
-            errors.append({"line": line_number, "error": (
-                "SKU trùng trong shop." if is_unique_violation(exc)
-                else "Dữ liệu không hợp lệ; kiểm tra các cột và giá/tồn kho không âm."
-            )})
+            errors.append(
+                {
+                    "line": line_number,
+                    "error": (
+                        "SKU trùng trong shop."
+                        if is_unique_violation(exc)
+                        else "Dữ liệu không hợp lệ; kiểm tra các cột và giá/tồn kho không âm."
+                    ),
+                }
+            )
     return {"imported": imported, "errors": errors}
 
 
@@ -872,8 +946,8 @@ async def web_channel_message(slug: str, payload: WebChannelMessage, request: Re
     legacy = repository.get_channel_conversation_by_external(
         shop["id"], "web", external_conversation_id
     )
-    storage_conversation_id = external_conversation_id if legacy else (
-        f"{shop['id']}:{external_conversation_id}"
+    storage_conversation_id = (
+        external_conversation_id if legacy else (f"{shop['id']}:{external_conversation_id}")
     )
     customer_id = payload.customer_id or f"web:{external_conversation_id}"
     inbound = InboundMessage(
@@ -934,7 +1008,9 @@ def web_channel_history(slug: str, external_id: str) -> list[dict]:
         shop["id"], "web", f"{shop['id']}:{external_id}"
     )
     if not conversation:
-        conversation = repository.get_channel_conversation_by_external(shop["id"], "web", external_id)
+        conversation = repository.get_channel_conversation_by_external(
+            shop["id"], "web", external_id
+        )
     if not conversation:
         raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
     return repository.list_channel_messages(conversation["id"])
@@ -955,9 +1031,7 @@ async def receive_meta_webhook(request: Request) -> dict:
     signature_adapter = MetaMessengerAdapter()
     if not settings.meta_app_secret:
         raise HTTPException(status_code=503, detail="Kênh Messenger chưa được cấu hình.")
-    if not signature_adapter.verify_signature(
-        body, request.headers.get("X-Hub-Signature-256")
-    ):
+    if not signature_adapter.verify_signature(body, request.headers.get("X-Hub-Signature-256")):
         raise HTTPException(status_code=401, detail="Chữ ký webhook không hợp lệ.")
     try:
         payload = json.loads(body)
@@ -965,8 +1039,10 @@ async def receive_meta_webhook(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="Webhook JSON không hợp lệ.") from exc
     if not isinstance(payload, dict) or not isinstance(payload.get("entry", []), list):
         raise HTTPException(status_code=400, detail="Webhook payload không hợp lệ.")
-    if any(not isinstance(entry, dict) or not isinstance(entry.get("messaging", []), list)
-           for entry in payload.get("entry", [])):
+    if any(
+        not isinstance(entry, dict) or not isinstance(entry.get("messaging", []), list)
+        for entry in payload.get("entry", [])
+    ):
         raise HTTPException(status_code=400, detail="Webhook entry không hợp lệ.")
     accepted = 0
     for entry in payload.get("entry", []):
@@ -981,7 +1057,10 @@ async def receive_meta_webhook(request: Request) -> dict:
             page_token = settings.meta_page_access_token
             if not connection:
                 connection = repository.upsert_channel_connection(
-                    shop["id"], "messenger", page_id, f"Facebook Page {page_id}",
+                    shop["id"],
+                    "messenger",
+                    page_id,
+                    f"Facebook Page {page_id}",
                     {"source": "environment"},
                 )
         if not shop or not connection or not page_token:
@@ -1102,9 +1181,7 @@ def control_inbox_bot(
     slug: str, conversation_id: str, payload: BotControlRequest, request: Request
 ) -> dict:
     require_channel_conversation(slug, conversation_id, request)
-    updated = repository.set_channel_bot(
-        conversation_id, payload.enabled, payload.assigned_to
-    )
+    updated = repository.set_channel_bot(conversation_id, payload.enabled, payload.assigned_to)
     return updated or {}
 
 
@@ -1155,10 +1232,7 @@ def conversation_trace(conversation_id: str, request: Request) -> dict:
     if not trace:
         raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
     user = authenticated_user_if_required(request)
-    if (
-        user
-        and not repository.get_shop_member(trace["conversation"]["shop_id"], user["id"])
-    ):
+    if user and not repository.get_shop_member(trace["conversation"]["shop_id"], user["id"]):
         raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập hội thoại này.")
     return trace
 
@@ -1171,10 +1245,7 @@ def create_conversation_feedback(
     if not trace:
         raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
     user = authenticated_user_if_required(request)
-    if (
-        user
-        and not repository.get_shop_member(trace["conversation"]["shop_id"], user["id"])
-    ):
+    if user and not repository.get_shop_member(trace["conversation"]["shop_id"], user["id"]):
         raise HTTPException(status_code=403, detail="Bạn không có quyền đánh giá hội thoại này.")
     return repository.add_conversation_feedback(
         conversation_id,

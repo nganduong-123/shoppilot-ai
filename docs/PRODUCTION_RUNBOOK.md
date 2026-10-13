@@ -70,8 +70,8 @@ Before inviting actual customers:
 6. Do not enable paid plans until a real Stripe test-mode checkout, cancellation,
    portal plan change and duplicate/out-of-order webhook delivery have been exercised
    with the configured prices. Mocked provider tests do not prove payment activation.
-   Test repeated Checkout clicks as well; UI prevention alone does not eliminate
-   independently created parallel Checkout sessions.
+   Repeated Checkout clicks are fenced by a per-workspace reservation and a stable
+   Stripe idempotency key; still exercise the configured Stripe account in test mode.
 
 ## Platform operator console
 

@@ -2,8 +2,8 @@
 
 **Auditable multi-tenant sales and support platform for online shops.**
 
-Release 1.3.0 adds separate platform operations, enforced team seats and resilient
-subscription event handling to the controlled pilot. Public customer launch
+Release 1.4.0 adds self-service account security, a provider-readiness dashboard
+and idempotent Checkout-session reservations to the controlled pilot. Public customer launch
 still requires the infrastructure and provider gates in the production runbook;
 passing automated tests is not a substitute for those gates.
 
@@ -151,8 +151,8 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **108 automated tests passed** on SQLite; the same suite also runs against isolated PostgreSQL schemas in CI.
-- **20/20 browser E2E checks passed** on the PostgreSQL-backed Docker release across AI reply, priority inbox, human copilot, takeover, resolution, integrations, team access, billing, order operations, catalog editing, shop policies and platform support. The four platform checks require the disposable operator fixture; CI provisions it only inside its test container.
+- **110 automated tests passed** on SQLite; the same suite also runs against isolated PostgreSQL schemas in CI.
+- **22/22 browser E2E checks passed** on the PostgreSQL-backed Docker release across AI reply, priority inbox, human copilot, takeover, resolution, integrations, team access, billing, order operations, catalog editing, shop policies, account security and platform support. Platform checks require the disposable operator fixture; CI provisions it only inside its test container.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
 - Coverage includes tenant isolation, product grounding, stock guard, explicit confirmation, prompt injection refusal and human handoff.
@@ -163,7 +163,9 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 
 | Method | Endpoint | Purpose |
 |---|---|---|
+| `GET` | `/account` | Let an authenticated user change their password and revoke older sessions |
 | `GET` | `/admin`, `/api/admin/*` | Separately authorized platform operations console |
+| `GET` | `/api/admin/readiness` | Report non-secret production-provider readiness for operators |
 | `PATCH/POST` | `/api/admin/users/{id}/status`, `/shops/{id}/trial`, `/jobs/{id}/retry` | Audited account support, plan trials and failed-job recovery |
 | `GET` | `/api/shops` | List tenant workspaces |
 | `PATCH` | `/api/shops/{slug}` | Update a managed shop's profile, policy and agent voice |
@@ -186,7 +188,7 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 | `POST` | `/api/shops/{slug}/inbox/conversations/{id}/assist` | Draft a grounded reply for human review without sending it |
 | `GET` | `/api/integrations/meta/status` | Read review URLs and configuration readiness without exposing secrets |
 | `POST` | `/api/auth/register`, `/api/auth/login`, `/api/auth/logout` | Manage ShopPilot accounts and HttpOnly sessions |
-| `POST` | `/api/auth/verify-email/*`, `/api/auth/password-reset/*` | Verify account email and reset a forgotten password |
+| `POST` | `/api/auth/verify-email/*`, `/api/auth/password-reset/*`, `/api/auth/password/change` | Verify email, recover an account and change an authenticated user's password |
 | `GET` | `/api/shops/{slug}/integrations/meta/connect` | Start Meta OAuth without collecting a Facebook password |
 | `GET` | `/api/integrations/meta/callback` | Exchange Meta authorization and load manageable Pages |
 | `POST` | `/api/shops/{slug}/integrations/meta/complete` | Encrypt the selected Page token and subscribe its webhook |
@@ -232,7 +234,7 @@ docs/                 # Architecture and interview learning material
 
 ## External activation boundaries
 
-The deployment path and core shop flows are implemented, but this does not certify a public SaaS launch. A new installation must still supply credentials for the services it chooses to use: Groq, Resend, Meta and optional shipping/commerce webhooks. Meta Advanced Access is an external review performed by Meta, not a code change. Until a provider URL is configured, the included catalog and shipping rules remain a deterministic fallback rather than pretending an external order was fulfilled. Seat-count enforcement and platform-wide administrator tools are not implemented; do not sell plans based on those features yet.
+The deployment path, core shop flows, seat enforcement and audited platform console are implemented, but this does not certify a public SaaS launch. A new installation must still supply credentials for the services it chooses to use: Groq, Resend, Meta, Stripe and optional shipping/commerce webhooks. Meta Advanced Access is an external review performed by Meta, not a code change. Until a provider URL is configured, the included catalog and shipping rules remain a deterministic fallback rather than pretending an external order was fulfilled. The admin readiness panel exposes these activation gaps without exposing credentials.
 
 See [docs/PRODUCTION_RUNBOOK.md](docs/PRODUCTION_RUNBOOK.md) for release, monitoring, recovery and connector activation steps.
 

@@ -358,6 +358,15 @@ CREATE TABLE IF NOT EXISTS billing_subscription_bindings (
     started_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS billing_checkout_attempts (
+    shop_id INTEGER PRIMARY KEY REFERENCES shops(id) ON DELETE CASCADE,
+    plan TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    checkout_url TEXT,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_conversation ON tool_calls(conversation_id);

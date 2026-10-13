@@ -33,14 +33,15 @@ async function refresh() {
   $("#refresh-admin").disabled = true;
   $("#admin-error").hidden = true;
   try {
-    const [summary, shops, users, jobs, audit] = await Promise.all([
-      api("/api/admin/overview"),api(`/api/admin/shops?limit=${pageSize}&offset=${pages.shops*pageSize}`),
+    const [summary, readiness, shops, users, jobs, audit] = await Promise.all([
+      api("/api/admin/overview"),api("/api/admin/readiness"),api(`/api/admin/shops?limit=${pageSize}&offset=${pages.shops*pageSize}`),
       api(`/api/admin/users?limit=${pageSize}&offset=${pages.users*pageSize}`),
       api("/api/admin/jobs"),api("/api/admin/audit"),
     ]);
     const labels = {users:"Tài khoản",suspended:"Đang khóa",shops:"Shop",failed_jobs:"Job lỗi",ai_turns:"Lượt AI tháng này"};
     $("#overview").innerHTML = Object.entries(labels).map(([key,label]) =>
       `<article><span>${label}</span><strong>${Number(summary[key])}</strong></article>`).join("");
+    $("#readiness").innerHTML = readiness.checks.map(check => `<article class="${check.ready ? "ready" : "pending"}"><span>${check.ready ? "✓" : "!"}</span><div><strong>${escapeHtml(check.label)}</strong><small>${escapeHtml(check.detail)}</small></div></article>`).join("");
     $("#admin-shops").innerHTML = shops.map(shop => `<tr><td>${escapeHtml(shop.name)}<small>${escapeHtml(shop.slug)}</small></td>
       <td>${shop.members}</td><td>${escapeHtml(shop.plan)} · ${escapeHtml(shop.billing_status)}</td>
       <td>${shop.trial_plan && new Date(shop.trial_expires_at) > new Date() ? `${escapeHtml(shop.trial_plan)}<small>${new Date(shop.trial_expires_at).toLocaleString("vi-VN")}</small>` : "Không có"}</td>

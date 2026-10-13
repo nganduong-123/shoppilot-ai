@@ -60,17 +60,33 @@ def test_checkout_posts_expected_subscription_metadata(monkeypatch):
             return {"url": "https://checkout.stripe.test/session"}
 
     def fake_post(url, **kwargs):
-        captured.update({"url": url, **kwargs})
+        captured.setdefault("requests", []).append({"url": url, **kwargs})
         return Response()
 
     monkeypatch.setattr(billing_module.httpx, "post", fake_post)
-    service = StripeBillingService(config=billing_config())
-    url = service.create_checkout(shop={"id": 42}, user={"email": "owner@example.com"}, plan="pro")
+    with TestClient(app) as client:
+        client.post("/api/auth/register", json=ACCOUNT)
+        shop = repository.get_shop("billing-shop")
+        service = StripeBillingService(config=billing_config())
+        url = service.create_checkout(shop=shop, user={"email": "owner@example.com"}, plan="pro")
+        repeated = service.create_checkout(
+            shop=shop, user={"email": "owner@example.com"}, plan="business"
+        )
+        assert client.post("/api/shops/billing-shop/billing/checkout/cancel").status_code == 200
+        after_cancel = service.create_checkout(
+            shop=shop, user={"email": "owner@example.com"}, plan="business"
+        )
 
     assert url == "https://checkout.stripe.test/session"
-    assert captured["data"]["line_items[0][price]"] == "price_pro"
-    assert captured["data"]["metadata[shop_id]"] == "42"
-    assert captured["data"]["mode"] == "subscription"
+    assert repeated == url and after_cancel == url
+    assert len(captured["requests"]) == 2
+    first = captured["requests"][0]
+    assert first["data"]["line_items[0][price]"] == "price_pro"
+    assert first["data"]["metadata[shop_id]"] == str(shop["id"])
+    assert first["data"]["mode"] == "subscription"
+    assert (
+        captured["requests"][1]["headers"]["Idempotency-Key"] != first["headers"]["Idempotency-Key"]
+    )
 
 
 def test_billing_api_defaults_to_free_and_requires_an_owner_for_checkout():
@@ -100,9 +116,7 @@ def test_non_owner_cannot_start_checkout():
         shop = repository.get_shop("billing-shop")
         agent = repository.get_user_by_email(agent_account["email"])
         repository.add_shop_member(shop["id"], agent["id"], "agent")
-        denied = agent_client.post(
-            "/api/shops/billing-shop/billing/checkout", json={"plan": "pro"}
-        )
+        denied = agent_client.post("/api/shops/billing-shop/billing/checkout", json={"plan": "pro"})
 
     assert denied.status_code == 403
 
@@ -112,12 +126,21 @@ def test_signed_checkout_webhook_activates_shop_subscription(monkeypatch):
     with TestClient(app) as client:
         client.post("/api/auth/register", json=ACCOUNT)
         shop = repository.get_shop("billing-shop")
-        monkeypatch.setattr(billing_module.httpx, "get", lambda *args, **kwargs:
-                            SimpleNamespace(raise_for_status=lambda: None, json=lambda: {
-                                "id": "sub_test", "created": 1700000000, "customer": "cus_test",
-                                "status": "active", "metadata": {"shop_id": str(shop["id"])},
-                                "items": {"data": [{"price": {"id": "price_pro"}}]},
-                            }))
+        monkeypatch.setattr(
+            billing_module.httpx,
+            "get",
+            lambda *args, **kwargs: SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {
+                    "id": "sub_test",
+                    "created": 1700000000,
+                    "customer": "cus_test",
+                    "status": "active",
+                    "metadata": {"shop_id": str(shop["id"])},
+                    "items": {"data": [{"price": {"id": "price_pro"}}]},
+                },
+            ),
+        )
         event = {
             "id": "evt_checkout",
             "type": "checkout.session.completed",
