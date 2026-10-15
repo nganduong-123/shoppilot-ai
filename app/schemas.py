@@ -111,6 +111,11 @@ class PasswordChangeRequest(BaseModel):
     new_password: str = Field(min_length=10, max_length=200)
 
 
+class AccountDeleteRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=200)
+    confirmation: Literal["DELETE"]
+
+
 class EvaluationFeedback(BaseModel):
     label: Literal["helpful", "incorrect", "unsafe"]
     note: str | None = Field(default=None, max_length=1000)

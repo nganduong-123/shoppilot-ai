@@ -59,7 +59,11 @@ class AuthService:
         self.repo = repo
 
     def register(
-        self, payload: dict[str, Any], *, create_session: bool = True
+        self,
+        payload: dict[str, Any],
+        *,
+        create_session: bool = True,
+        user_agent: str | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         email = normalize_email(payload["email"])
         user = self.repo.create_user_with_shop(
@@ -80,10 +84,12 @@ class AuthService:
         )
         if not settings.email_verification_required:
             self.repo.mark_email_verified(user["id"])
-        token = self._new_session(user["id"]) if create_session else None
+        token = self._new_session(user["id"], user_agent) if create_session else None
         return self._public_user(user), token
 
-    def login(self, email: str, password: str) -> tuple[dict[str, Any], str] | None:
+    def login(
+        self, email: str, password: str, user_agent: str | None = None
+    ) -> tuple[dict[str, Any], str] | None:
         user = self.repo.get_user_by_email(normalize_email(email))
         if not user or user["status"] != "active":
             return None
@@ -91,7 +97,7 @@ class AuthService:
             return None
         if settings.email_verification_required and not self.repo.is_email_verified(user["id"]):
             raise EmailNotVerifiedError
-        return self._public_user(user), self._new_session(user["id"])
+        return self._public_user(user), self._new_session(user["id"], user_agent)
 
     def issue_account_token(self, user_id: str, purpose: str, minutes: int) -> str:
         token = secrets.token_urlsafe(32)
@@ -117,33 +123,48 @@ class AuthService:
         self.repo.update_user_password(account["user_id"], hash_password(new_password))
         return account
 
-    def change_password(self, user_id: str, current_password: str, new_password: str) -> str | None:
+    def change_password(
+        self,
+        user_id: str,
+        current_password: str,
+        new_password: str,
+        user_agent: str | None = None,
+    ) -> str | None:
         user = self.repo.get_user_by_id(user_id)
         if not user or not verify_password(current_password, user["password_hash"]):
             return None
         if verify_password(new_password, user["password_hash"]):
             raise ValueError("New password must be different")
         self.repo.update_user_password(user_id, hash_password(new_password))
-        return self._new_session(user_id)
+        return self._new_session(user_id, user_agent)
 
-    def _new_session(self, user_id: str) -> str:
+    def _new_session(self, user_id: str, user_agent: str | None = None) -> str:
         token = secrets.token_urlsafe(32)
         expires_at = (datetime.now(UTC) + timedelta(days=settings.session_days)).isoformat()
-        self.repo.create_auth_session(user_id, token_digest(token), expires_at)
+        self.repo.create_auth_session(user_id, token_digest(token), expires_at, user_agent)
         return token
 
-    def user_from_request(self, request: Request) -> dict[str, Any] | None:
+    def verify_credentials(self, user_id: str, password: str) -> bool:
+        user = self.repo.get_user_by_id(user_id)
+        return bool(user and verify_password(password, user["password_hash"]))
+
+    @staticmethod
+    def request_token(request: Request) -> str | None:
         token = request.cookies.get(settings.session_cookie_name)
         if not token:
             authorization = request.headers.get("Authorization", "")
             if authorization.startswith("Bearer "):
                 token = authorization[7:].strip()
+        return token or None
+
+    def user_from_request(self, request: Request) -> dict[str, Any] | None:
+        token = self.request_token(request)
         if not token:
             return None
         return self.repo.get_user_by_session(token_digest(token), datetime.now(UTC).isoformat())
 
     def logout(self, request: Request) -> None:
-        token = request.cookies.get(settings.session_cookie_name)
+        token = self.request_token(request)
         if token:
             self.repo.delete_auth_session(token_digest(token))
 

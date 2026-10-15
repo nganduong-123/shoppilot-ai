@@ -37,8 +37,9 @@ from app.observability import RequestObservabilityMiddleware, metrics
 from app.plans import PLANS
 from app.production import production_errors
 from app.rate_limit import enforce_rate_limit
-from app.repository import SeatLimitReached, repository
+from app.repository import AccountDeletionBlocked, SeatLimitReached, repository
 from app.schemas import (
+    AccountDeleteRequest,
     AccountEmailRequest,
     AccountTokenRequest,
     BillingCheckoutRequest,
@@ -86,6 +87,11 @@ def require_account_email() -> None:
             status_code=503,
             detail="Khôi phục qua email chưa được bật. Vui lòng liên hệ quản trị viên ShopPilot.",
         )
+
+
+def request_user_agent(request: Request) -> str | None:
+    value = request.headers.get("User-Agent", "").strip()
+    return value[:300] or None
 
 
 @asynccontextmanager
@@ -191,7 +197,9 @@ def register_account(payload: RegisterRequest, request: Request, response: Respo
         )
     try:
         user, token = auth_service.register(
-            payload.model_dump(), create_session=not settings.email_verification_required
+            payload.model_dump(),
+            create_session=not settings.email_verification_required,
+            user_agent=request_user_agent(request),
         )
     except ValueError as exc:
         raise HTTPException(
@@ -235,7 +243,9 @@ def login_account(payload: LoginRequest, request: Request, response: Response) -
         enabled=settings.rate_limit_enabled,
     )
     try:
-        result = auth_service.login(payload.email, payload.password)
+        result = auth_service.login(
+            payload.email, payload.password, user_agent=request_user_agent(request)
+        )
     except EmailNotVerifiedError as exc:
         raise HTTPException(
             status_code=403, detail="Vui lòng xác minh email trước khi đăng nhập."
@@ -321,7 +331,10 @@ def change_password(payload: PasswordChangeRequest, request: Request, response: 
     user = require_user(request)
     try:
         token = auth_service.change_password(
-            user["id"], payload.current_password, payload.new_password
+            user["id"],
+            payload.current_password,
+            payload.new_password,
+            user_agent=request_user_agent(request),
         )
     except ValueError as exc:
         raise HTTPException(
@@ -331,6 +344,102 @@ def change_password(payload: PasswordChangeRequest, request: Request, response: 
         raise HTTPException(status_code=401, detail="Mật khẩu hiện tại không đúng.")
     auth_service.set_session_cookie(response, token)
     return {"changed": True}
+
+
+@app.get("/api/auth/sessions")
+def list_auth_sessions(request: Request) -> dict:
+    user = require_user(request)
+    token = auth_service.request_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Phiên đăng nhập không hợp lệ.")
+    return {
+        "sessions": repository.list_auth_sessions(
+            user["id"], datetime.now(UTC).isoformat(), token_digest(token)
+        )
+    }
+
+
+@app.delete("/api/auth/sessions/{session_id}")
+def revoke_auth_session(session_id: str, request: Request) -> dict:
+    user = require_user(request)
+    token = auth_service.request_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Phiên đăng nhập không hợp lệ.")
+    sessions = repository.list_auth_sessions(
+        user["id"], datetime.now(UTC).isoformat(), token_digest(token)
+    )
+    target = next((item for item in sessions if item["id"] == session_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phiên đăng nhập.")
+    if target["current"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Hãy dùng nút đăng xuất để kết thúc phiên hiện tại.",
+        )
+    repository.delete_auth_session_by_id(user["id"], session_id)
+    return {"revoked": True}
+
+
+@app.post("/api/auth/sessions/revoke-others")
+def revoke_other_auth_sessions(request: Request) -> dict:
+    user = require_user(request)
+    token = auth_service.request_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Phiên đăng nhập không hợp lệ.")
+    revoked = repository.delete_other_auth_sessions(user["id"], token_digest(token))
+    return {"revoked": revoked}
+
+
+@app.get("/api/auth/account/export")
+def export_account_data(request: Request) -> dict:
+    user = require_user(request)
+    shops = repository.list_user_shops(user["id"])
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "account": {
+            **user,
+            "email_verified": repository.is_email_verified(user["id"]),
+        },
+        "memberships": [
+            {
+                "shop_slug": shop["slug"],
+                "shop_name": shop["name"],
+                "role": shop["role"],
+                "joined_workspace_created_at": shop["created_at"],
+            }
+            for shop in shops
+        ],
+    }
+
+
+@app.delete("/api/auth/account")
+def delete_account(payload: AccountDeleteRequest, request: Request, response: Response) -> dict:
+    enforce_rate_limit(
+        request,
+        "auth",
+        settings.auth_rate_limit_requests,
+        settings.auth_rate_limit_window_seconds,
+        enabled=settings.rate_limit_enabled,
+    )
+    user = require_user(request)
+    if not auth_service.verify_credentials(user["id"], payload.password):
+        raise HTTPException(status_code=401, detail="Mật khẩu hiện tại không đúng.")
+    try:
+        deleted = repository.delete_user_account(user["id"])
+    except AccountDeletionBlocked as exc:
+        if exc.reason == "platform_admin":
+            detail = "Tài khoản quản trị nền tảng phải được gỡ quyền trước khi xóa."
+        else:
+            detail = (
+                "Bạn đang là chủ sở hữu duy nhất của: "
+                + ", ".join(exc.shops)
+                + ". Hãy chuyển quyền sở hữu trước khi xóa tài khoản."
+            )
+        raise HTTPException(status_code=409, detail=detail) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản.")
+    auth_service.clear_session_cookie(response)
+    return {"deleted": True}
 
 
 @app.post("/api/auth/logout")

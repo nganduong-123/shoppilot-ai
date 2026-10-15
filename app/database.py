@@ -516,7 +516,8 @@ def connect(path: Path | None = None) -> sqlite3.Connection | PostgresConnection
         if psycopg is None:
             raise RuntimeError("DATABASE_URL requires the psycopg package.")
         raw_connection = psycopg.connect(
-            settings.database_url, connect_timeout=10,
+            settings.database_url,
+            connect_timeout=10,
             options="-c statement_timeout=15000 -c lock_timeout=5000",
         )
         schema = getattr(settings, "database_schema", None)
@@ -550,9 +551,9 @@ def db_session(path: Path | None = None) -> Iterator[sqlite3.Connection | Postgr
 def init_database(path: Path | None = None) -> None:
     with db_session(path) as connection:
         connection.executescript(POSTGRES_SCHEMA if using_postgres(path) else SCHEMA)
-        migration = "001_email_verification_backfill"
+        email_migration = "001_email_verification_backfill"
         applied = connection.execute(
-            "SELECT 1 FROM schema_migrations WHERE version = ?", (migration,)
+            "SELECT 1 FROM schema_migrations WHERE version = ?", (email_migration,)
         ).fetchone()
         if not applied:
             # Accounts created before verification support remain valid after migration.
@@ -567,7 +568,17 @@ def init_database(path: Path | None = None) -> None:
             )
             connection.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-                (migration, utc_now()),
+                (email_migration, utc_now()),
+            )
+        session_migration = "002_auth_session_user_agent"
+        applied = connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = ?", (session_migration,)
+        ).fetchone()
+        if not applied:
+            connection.execute("ALTER TABLE auth_sessions ADD COLUMN user_agent TEXT")
+            connection.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+                (session_migration, utc_now()),
             )
 
 

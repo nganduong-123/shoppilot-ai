@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from threading import Barrier
 from types import SimpleNamespace
 
 import httpx
@@ -12,6 +14,7 @@ import app.main as main_module
 from app.auth import hash_password, verify_password
 from app.config import settings
 from app.main import app
+from app.repository import AccountDeletionBlocked, repository
 
 REGISTER_PAYLOAD = {
     "display_name": "Chủ Shop Test",
@@ -417,3 +420,159 @@ def test_account_page_requires_login():
         assert client.get("/account").status_code == 401
         client.post("/api/auth/register", json=REGISTER_PAYLOAD)
         assert client.get("/account").status_code == 200
+
+
+def test_user_can_inspect_and_revoke_other_sessions_without_exposing_tokens():
+    other = TestClient(app)
+    with TestClient(app) as client:
+        client.post(
+            "/api/auth/register",
+            json=REGISTER_PAYLOAD,
+            headers={"User-Agent": "Primary Browser Windows"},
+        )
+        other.post(
+            "/api/auth/login",
+            json={
+                "email": REGISTER_PAYLOAD["email"],
+                "password": REGISTER_PAYLOAD["password"],
+            },
+            headers={"User-Agent": "Other Browser Android"},
+        )
+        sessions = client.get("/api/auth/sessions")
+        assert sessions.status_code == 200
+        assert len(sessions.json()["sessions"]) == 2
+        assert sum(item["current"] for item in sessions.json()["sessions"]) == 1
+        assert "token" not in sessions.text.casefold()
+        assert {item["user_agent"] for item in sessions.json()["sessions"]} == {
+            "Primary Browser Windows",
+            "Other Browser Android",
+        }
+        current = next(item for item in sessions.json()["sessions"] if item["current"])
+        assert client.delete(f"/api/auth/sessions/{current['id']}").status_code == 400
+        target = next(item for item in sessions.json()["sessions"] if not item["current"])
+        assert other.delete(f"/api/auth/sessions/{current['id']}").status_code == 200
+        assert client.get("/api/auth/me").json()["authenticated"] is False
+        client.post(
+            "/api/auth/login",
+            json={"email": REGISTER_PAYLOAD["email"], "password": REGISTER_PAYLOAD["password"]},
+        )
+        assert client.delete("/api/auth/sessions/missing-session").status_code == 404
+        assert client.delete(f"/api/auth/sessions/{target['id']}").status_code == 200
+        assert other.get("/api/auth/me").json()["authenticated"] is False
+        other.post(
+            "/api/auth/login",
+            json={"email": REGISTER_PAYLOAD["email"], "password": REGISTER_PAYLOAD["password"]},
+        )
+        revoked = client.post("/api/auth/sessions/revoke-others")
+        assert revoked.json() == {"revoked": 1}
+        assert client.get("/api/auth/me").json()["authenticated"] is True
+        assert other.get("/api/auth/me").json()["authenticated"] is False
+    other.close()
+
+
+def test_account_export_is_scoped_and_contains_no_credentials():
+    with TestClient(app) as client:
+        client.post("/api/auth/register", json=REGISTER_PAYLOAD)
+        exported = client.get("/api/auth/account/export")
+    assert exported.status_code == 200
+    assert exported.json()["account"]["email"] == REGISTER_PAYLOAD["email"]
+    assert exported.json()["memberships"] == [
+        {
+            "shop_slug": REGISTER_PAYLOAD["shop_slug"],
+            "shop_name": REGISTER_PAYLOAD["shop_name"],
+            "role": "owner",
+            "joined_workspace_created_at": exported.json()["memberships"][0][
+                "joined_workspace_created_at"
+            ],
+        }
+    ]
+    assert "password" not in exported.text.casefold()
+    assert "token" not in exported.text.casefold()
+
+
+def test_account_deletion_requires_password_and_another_shop_owner():
+    replacement_payload = {
+        **REGISTER_PAYLOAD,
+        "email": "replacement@example.com",
+        "display_name": "Replacement Owner",
+        "shop_name": "Replacement Shop",
+        "shop_slug": "replacement-shop",
+    }
+    replacement_client = TestClient(app)
+    with TestClient(app) as client:
+        client.post("/api/auth/register", json=REGISTER_PAYLOAD)
+        replacement_client.post("/api/auth/register", json=replacement_payload)
+        wrong = client.request(
+            "DELETE",
+            "/api/auth/account",
+            json={"password": "wrong", "confirmation": "DELETE"},
+        )
+        blocked = client.request(
+            "DELETE",
+            "/api/auth/account",
+            json={"password": REGISTER_PAYLOAD["password"], "confirmation": "DELETE"},
+        )
+        assert wrong.status_code == 401
+        assert blocked.status_code == 409
+        assert REGISTER_PAYLOAD["shop_slug"] in blocked.json()["detail"]
+        shop = repository.get_shop(REGISTER_PAYLOAD["shop_slug"])
+        replacement = repository.get_user_by_email(replacement_payload["email"])
+        repository.add_shop_member(shop["id"], replacement["id"], "owner")
+        deleted = client.request(
+            "DELETE",
+            "/api/auth/account",
+            json={"password": REGISTER_PAYLOAD["password"], "confirmation": "DELETE"},
+        )
+        assert deleted.json() == {"deleted": True}
+        assert client.get("/api/auth/me").json()["authenticated"] is False
+        assert repository.get_user_by_email(REGISTER_PAYLOAD["email"]) is None
+        assert repository.get_shop_member(shop["id"], replacement["id"])["role"] == "owner"
+    replacement_client.close()
+
+
+def test_platform_admin_account_deletion_is_blocked():
+    with TestClient(app) as client:
+        client.post("/api/auth/register", json=REGISTER_PAYLOAD)
+        repository.grant_platform_admin(
+            REGISTER_PAYLOAD["email"], "Protected operator test"
+        )
+        deleted = client.request(
+            "DELETE",
+            "/api/auth/account",
+            json={
+                "password": REGISTER_PAYLOAD["password"],
+                "confirmation": "DELETE",
+            },
+        )
+        assert deleted.status_code == 409
+        assert "quản trị nền tảng" in deleted.json()["detail"]
+        assert client.get("/api/auth/me").json()["authenticated"] is True
+
+
+def test_concurrent_owner_deletions_preserve_workspace_ownership():
+    with TestClient(app) as client:
+        client.post("/api/auth/register", json=REGISTER_PAYLOAD)
+        first = repository.get_user_by_email(REGISTER_PAYLOAD["email"])
+        second, _ = auth_module.auth_service.register(
+            {**REGISTER_PAYLOAD, "email": "second@example.com", "shop_slug": "second-shop"}
+        )
+        first_shop = repository.get_shop(REGISTER_PAYLOAD["shop_slug"])
+        second_shop = repository.get_shop("second-shop")
+        repository.add_shop_member(first_shop["id"], second["id"], "owner")
+        repository.add_shop_member(second_shop["id"], first["id"], "owner")
+        barrier = Barrier(2)
+
+        def delete(user_id):
+            barrier.wait(timeout=10)
+            try:
+                return repository.delete_user_account(user_id)
+            except AccountDeletionBlocked:
+                return False
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(delete, [first["id"], second["id"]]))
+        assert sorted(results) == [False, True]
+        for shop in [first_shop, second_shop]:
+            members = repository.list_shop_team(shop["id"])["members"]
+            assert len(members) == 1
+            assert members[0]["role"] == "owner"

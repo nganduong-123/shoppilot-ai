@@ -2,8 +2,8 @@
 
 **Auditable multi-tenant sales and support platform for online shops.**
 
-Release 1.4.0 adds self-service account security, a provider-readiness dashboard
-and idempotent Checkout-session reservations to the controlled pilot. Public customer launch
+Release 1.5.0 adds active-session management, scoped account export and guarded
+self-service account deletion to the controlled pilot. Public customer launch
 still requires the infrastructure and provider gates in the production runbook;
 passing automated tests is not a substitute for those gates.
 
@@ -29,7 +29,7 @@ ShopPilot goes beyond an FAQ chatbot: it uses tools to search a tenant-scoped ca
 - **Revenue-rescue queue:** detects buying signals, flags unanswered handoffs, tracks a five-minute SLA and lets staff take or resolve each conversation.
 - **Human reply copilot:** summarizes the thread and drafts a grounded reply for staff review; it never sends a customer message automatically.
 - **Meta review readiness:** public privacy/terms pages plus a signed user-data deletion callback and status receipt.
-- **Secure shop accounts:** scrypt password hashing, HttpOnly sessions and owner/manager/agent tenant boundaries.
+- **Secure shop accounts:** scrypt password hashing, HttpOnly sessions, per-device session revocation, scoped data export and guarded account deletion.
 - **Team workspaces:** expiring email invitations, role management, atomic seat reservations and last-owner protection for every tenant.
 - **Platform administration:** a separately authorized console for accounts, shops, temporary trials, failed-job recovery and audited support actions; tenant owners cannot grant themselves platform access.
 - **Shop setup:** owners/managers edit products, inventory and real store policies in the console; agents cannot change the catalog.
@@ -151,8 +151,8 @@ node scripts\e2e_browser.mjs  # requires the app running on port 8000
 
 Current deterministic baseline:
 
-- **110 automated tests passed** on SQLite; the same suite also runs against isolated PostgreSQL schemas in CI.
-- **22/22 browser E2E checks passed** on the PostgreSQL-backed Docker release across AI reply, priority inbox, human copilot, takeover, resolution, integrations, team access, billing, order operations, catalog editing, shop policies, account security and platform support. Platform checks require the disposable operator fixture; CI provisions it only inside its test container.
+- **116 automated tests passed** on SQLite; the same suite also runs against isolated PostgreSQL schemas in CI.
+- **23/23 browser E2E checks passed** on a local SQLite-backed server across AI reply, priority inbox, human copilot, takeover, resolution, integrations, team access, billing, order operations, catalog editing, shop policies, account security and platform support. CI repeats the browser gate inside Docker. Platform checks require the disposable operator fixture.
 - **16/16 evaluation scenarios passed**
 - **16/16 Groq online scenarios passed** after introducing hybrid routing
 - Coverage includes tenant isolation, product grounding, stock guard, explicit confirmation, prompt injection refusal and human handoff.
@@ -189,6 +189,9 @@ The 100% scenario result describes only the committed evaluation set; it is not 
 | `GET` | `/api/integrations/meta/status` | Read review URLs and configuration readiness without exposing secrets |
 | `POST` | `/api/auth/register`, `/api/auth/login`, `/api/auth/logout` | Manage ShopPilot accounts and HttpOnly sessions |
 | `POST` | `/api/auth/verify-email/*`, `/api/auth/password-reset/*`, `/api/auth/password/change` | Verify email, recover an account and change an authenticated user's password |
+| `GET/DELETE` | `/api/auth/sessions`, `/api/auth/sessions/{id}` | Inspect active sessions and revoke another device |
+| `POST` | `/api/auth/sessions/revoke-others` | Sign out every device except the current session |
+| `GET/DELETE` | `/api/auth/account/export`, `/api/auth/account` | Export account membership data or safely delete a non-owner account |
 | `GET` | `/api/shops/{slug}/integrations/meta/connect` | Start Meta OAuth without collecting a Facebook password |
 | `GET` | `/api/integrations/meta/callback` | Exchange Meta authorization and load manageable Pages |
 | `POST` | `/api/shops/{slug}/integrations/meta/complete` | Encrypt the selected Page token and subscribe its webhook |

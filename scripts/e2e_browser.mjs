@@ -162,6 +162,7 @@ try {
   await waitFor(() => client.evaluate(`!document.querySelector("#thread-content").hidden`), "inbox thread opens");
   await client.evaluate(`document.querySelector("#bot-enabled").click()`);
   await waitFor(async () => !(await findConversation()).bot_enabled, "human takeover enabled");
+  await waitFor(() => client.evaluate(`!document.querySelector('#bot-enabled').disabled && !document.querySelector('#copilot-assist').disabled`), "human takeover UI ready");
 
   await client.evaluate(`document.querySelector("#copilot-assist").click()`);
   await waitFor(
@@ -326,9 +327,31 @@ try {
     await client.evaluate(`window.prompt=()=> 'Disposable E2E restore access';document.querySelector('[data-user][data-status="active"]').click()`);
     await waitFor(() => client.evaluate(`document.querySelector('#admin-audit').textContent.includes('user.active')`), 'account access restored');
     platformChecks.push('platform_suspend_restore');
+    const newOtherSession = async () => {
+      const response = await fetch(`${base}/api/auth/login`, {method:'POST',
+        headers:{'Content-Type':'application/json', 'User-Agent':'E2E other device'},
+        body:JSON.stringify({email:'e2e-platform@example.com',password:'e2e-platform-test-password'})});
+      if (!response.ok) throw new Error('Other-device login failed');
+      return response.headers.get('set-cookie').split(';')[0];
+    };
+    const otherCookie = await newOtherSession();
     await client.navigate(`${base}/account`, '#password-form');
+    await waitFor(() => client.evaluate(`document.querySelectorAll('.session-row').length===2 && document.querySelector('.current')?.textContent.includes('THIẾT BỊ NÀY')`), 'account session inventory');
+    await client.evaluate(`document.querySelector('[data-revoke]').click()`);
+    await waitFor(() => client.evaluate(`document.querySelectorAll('.session-row').length===1`), 'single-device revocation');
+    const otherMe = await fetch(`${base}/api/auth/me`, {headers:{Cookie:otherCookie}}).then(r=>r.json());
+    if (otherMe.authenticated) throw new Error('Revoked device remains authenticated');
+    await newOtherSession();
+    await client.navigate(`${base}/account`, '#password-form');
+    await waitFor(() => client.evaluate(`document.querySelectorAll('.session-row').length===2`), 'another active device');
+    await client.evaluate(`document.querySelector('#revoke-others').click()`);
+    await waitFor(() => client.evaluate(`document.querySelectorAll('.session-row').length===1 && !document.querySelector('#revoke-others').disabled`), 'revoke others completes and re-enables button');
+    await client.send('Page.setDownloadBehavior', {behavior:'allow',downloadPath:userData});
+    await client.evaluate(`document.querySelector('#export-account').click()`);
+    await waitFor(() => client.evaluate(`document.querySelector('#global-status').textContent.includes('Đã tải dữ liệu') && !document.querySelector('#export-account').disabled`), 'account export completes and re-enables button');
+    platformChecks.push('account_session_management');
     await client.evaluate(`{const form=document.querySelector('#password-form');form.elements.current_password.value='e2e-platform-test-password';form.elements.new_password.value='e2e-platform-new-password';form.elements.confirmation.value='e2e-platform-new-password';form.requestSubmit()}`);
-    await waitFor(() => client.evaluate(`document.querySelector('#status').textContent.includes('Đã đổi mật khẩu')`), 'self-service password change');
+    await waitFor(() => client.evaluate(`document.querySelector('#global-status').textContent.includes('Đã đổi mật khẩu')`), 'self-service password change');
     if (!await client.evaluate(`fetch('/api/auth/me').then(r=>r.json()).then(x=>x.authenticated===true)`)) throw new Error('Password change did not preserve the current session');
     platformChecks.push('account_password_change');
   }

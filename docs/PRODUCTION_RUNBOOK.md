@@ -149,6 +149,12 @@ receivers must deduplicate by `order_id`.
 
 Verification and password-reset tokens are random, hashed at rest, single-use and time-limited. Password reset revokes every existing session. The request endpoint always returns the same response for known and unknown addresses to prevent account enumeration.
 
+Authenticated users can review active sessions at `/account`, revoke another device or
+sign out every other device. Account export contains only the user's identity and tenant
+memberships, never password hashes or session tokens. Self-service deletion requires the
+current password and is blocked for platform administrators and the sole remaining Owner
+of any workspace; transfer ownership before deleting that account.
+
 If email delivery is unavailable, keep `EMAIL_VERIFICATION_REQUIRED=false` until the provider is restored; do not enable a mandatory flow without a configured sender.
 
 Password reset and verification requests return `503` when account email is not

@@ -35,7 +35,7 @@ jobs:
       - run: pytest -q
       - run: python scripts/evaluate.py
       - run: pip-audit -r requirements.txt --progress-spinner off
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: matrix.database == 'sqlite'
         with:
           node-version: "22"

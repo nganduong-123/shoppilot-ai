@@ -20,7 +20,7 @@ def env_bool(name: str, default: bool = False) -> bool:
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "ShopPilot AI"
-    app_version: str = "1.4.0"
+    app_version: str = "1.5.0"
     app_env: str = os.getenv("APP_ENV", "development")
     seed_demo_data: bool = env_bool("SEED_DEMO_DATA", os.getenv("APP_ENV") != "production")
     llm_turn_timeout_seconds: int = int(os.getenv("LLM_TURN_TIMEOUT_SECONDS", "30"))
@@ -35,18 +35,12 @@ class Settings:
     email_from: str = os.getenv("EMAIL_FROM", "ShopPilot AI <noreply@example.com>")
     resend_api_key: str | None = os.getenv("RESEND_API_KEY")
     verification_token_minutes: int = int(os.getenv("VERIFICATION_TOKEN_MINUTES", "60"))
-    password_reset_token_minutes: int = int(
-        os.getenv("PASSWORD_RESET_TOKEN_MINUTES", "30")
-    )
+    password_reset_token_minutes: int = int(os.getenv("PASSWORD_RESET_TOKEN_MINUTES", "30"))
     rate_limit_enabled: bool = env_bool("RATE_LIMIT_ENABLED", True)
     auth_rate_limit_requests: int = int(os.getenv("AUTH_RATE_LIMIT_REQUESTS", "10"))
-    auth_rate_limit_window_seconds: int = int(
-        os.getenv("AUTH_RATE_LIMIT_WINDOW_SECONDS", "300")
-    )
+    auth_rate_limit_window_seconds: int = int(os.getenv("AUTH_RATE_LIMIT_WINDOW_SECONDS", "300"))
     chat_rate_limit_requests: int = int(os.getenv("CHAT_RATE_LIMIT_REQUESTS", "60"))
-    chat_rate_limit_window_seconds: int = int(
-        os.getenv("CHAT_RATE_LIMIT_WINDOW_SECONDS", "60")
-    )
+    chat_rate_limit_window_seconds: int = int(os.getenv("CHAT_RATE_LIMIT_WINDOW_SECONDS", "60"))
     max_csv_upload_bytes: int = int(os.getenv("MAX_CSV_UPLOAD_BYTES", "2000000"))
     max_csv_rows: int = int(os.getenv("MAX_CSV_ROWS", "10000"))
     session_cookie_name: str = os.getenv("SESSION_COOKIE_NAME", "shoppilot_session")

@@ -59,6 +59,13 @@ class SeatLimitReached(ValueError):
     pass
 
 
+class AccountDeletionBlocked(ValueError):
+    def __init__(self, reason: str, shops: list[str] | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.shops = shops or []
+
+
 def _seat_limits(connection: Any, shop_id: int, now: str) -> dict:
     subscription = connection.execute(
         "SELECT plan, status FROM shop_subscriptions WHERE shop_id = ?",
@@ -320,14 +327,17 @@ class Repository:
             )
             connection.execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
 
-    def create_auth_session(self, user_id: str, token_hash: str, expires_at: str) -> None:
+    def create_auth_session(
+        self, user_id: str, token_hash: str, expires_at: str, user_agent: str | None = None
+    ) -> None:
         with db_session() as connection:
             connection.execute(
                 """
-                INSERT INTO auth_sessions (id, user_id, token_hash, expires_at, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO auth_sessions
+                    (id, user_id, token_hash, expires_at, created_at, user_agent)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (str(uuid4()), user_id, token_hash, expires_at, utc_now()),
+                (str(uuid4()), user_id, token_hash, expires_at, utc_now(), user_agent),
             )
 
     def get_user_by_session(self, token_hash: str, now: str) -> dict[str, Any] | None:
@@ -346,6 +356,83 @@ class Repository:
     def delete_auth_session(self, token_hash: str) -> None:
         with db_session() as connection:
             connection.execute("DELETE FROM auth_sessions WHERE token_hash = ?", (token_hash,))
+
+    def list_auth_sessions(
+        self, user_id: str, now: str, current_token_hash: str
+    ) -> list[dict[str, Any]]:
+        with db_session() as connection:
+            connection.execute(
+                "DELETE FROM auth_sessions WHERE user_id = ? AND expires_at <= ?",
+                (user_id, now),
+            )
+            rows = connection.execute(
+                """
+                SELECT id, token_hash, user_agent, created_at, expires_at
+                FROM auth_sessions
+                WHERE user_id = ? AND expires_at > ?
+                ORDER BY created_at DESC
+                """,
+                (user_id, now),
+            ).fetchall()
+        sessions = []
+        for row in rows:
+            item = dict(row)
+            item["current"] = item.pop("token_hash") == current_token_hash
+            sessions.append(item)
+        return sessions
+
+    def delete_auth_session_by_id(self, user_id: str, session_id: str) -> bool:
+        with db_session() as connection:
+            deleted = connection.execute(
+                "DELETE FROM auth_sessions WHERE id = ? AND user_id = ?",
+                (session_id, user_id),
+            )
+            return deleted.rowcount == 1
+
+    def delete_other_auth_sessions(self, user_id: str, current_token_hash: str) -> int:
+        with db_session() as connection:
+            deleted = connection.execute(
+                "DELETE FROM auth_sessions WHERE user_id = ? AND token_hash <> ?",
+                (user_id, current_token_hash),
+            )
+            return deleted.rowcount
+
+    def delete_user_account(self, user_id: str) -> bool:
+        with db_session() as connection:
+            memberships = connection.execute(
+                "SELECT shop_id FROM shop_members WHERE user_id = ? ORDER BY shop_id",
+                (user_id,),
+            ).fetchall()
+            # Use the same workspace locks as role changes and member removal so
+            # concurrent owner deletions cannot leave a workspace without an owner.
+            for membership in memberships:
+                connection.execute(
+                    "UPDATE shops SET slug = slug WHERE id = ?", (membership["shop_id"],)
+                )
+            admin = connection.execute(
+                "SELECT 1 FROM platform_admins WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            if admin:
+                raise AccountDeletionBlocked("platform_admin")
+            sole_owner_rows = connection.execute(
+                """
+                SELECT s.slug
+                FROM shop_members mine
+                JOIN shops s ON s.id = mine.shop_id
+                WHERE mine.user_id = ? AND mine.role = 'owner'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM shop_members other
+                    WHERE other.shop_id = mine.shop_id
+                      AND other.role = 'owner' AND other.user_id <> mine.user_id
+                  )
+                ORDER BY s.slug
+                """,
+                (user_id,),
+            ).fetchall()
+            if sole_owner_rows:
+                raise AccountDeletionBlocked("sole_owner", [row["slug"] for row in sole_owner_rows])
+            deleted = connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            return deleted.rowcount == 1
 
     def list_user_shops(self, user_id: str) -> list[dict[str, Any]]:
         with db_session() as connection:

@@ -1,20 +1,43 @@
 <!doctype html>
 <html lang="vi">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ShopPilot · Tài khoản</title><link rel="stylesheet" href="/static/account.css?v=1.4.0">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ShopPilot · Tài khoản</title>
+  <link rel="stylesheet" href="/static/account.css?v=1.5.0">
 </head>
-<body><main>
-  <a href="/">← Quay lại ShopPilot</a>
-  <section><p>SHOPPILOT ACCOUNT</p><h1>Tài khoản và bảo mật</h1>
-    <div id="identity"></div>
-    <form id="password-form">
+<body>
+<main>
+  <header class="page-header">
+    <div><a href="/">← Quay lại ShopPilot</a><p>SHOPPILOT ACCOUNT</p><h1>Tài khoản & bảo mật</h1><div id="identity"></div></div>
+    <button id="logout" class="secondary">Đăng xuất thiết bị này</button>
+  </header>
+  <div id="global-status" role="status"></div>
+  <section>
+    <div class="section-head"><div><h2>Đổi mật khẩu</h2><p>Đổi mật khẩu sẽ thu hồi mọi phiên cũ và cấp lại phiên cho thiết bị này.</p></div></div>
+    <form id="password-form" class="form-grid">
       <label>Mật khẩu hiện tại<input name="current_password" type="password" autocomplete="current-password" required maxlength="200"></label>
       <label>Mật khẩu mới<input name="new_password" type="password" autocomplete="new-password" required minlength="10" maxlength="200"></label>
       <label>Nhập lại mật khẩu mới<input name="confirmation" type="password" autocomplete="new-password" required minlength="10" maxlength="200"></label>
       <button type="submit">Đổi mật khẩu</button>
     </form>
-    <p id="status" role="status"></p>
-    <small>Đổi mật khẩu sẽ đăng xuất các phiên khác. Phiên trên thiết bị này được cấp lại tự động.</small>
   </section>
-</main><script src="/static/account.js?v=1.4.0" defer></script></body></html>
+  <section>
+    <div class="section-head"><div><h2>Phiên đăng nhập</h2><p>Xem và thu hồi những thiết bị không còn sử dụng.</p></div><button id="revoke-others" class="secondary">Đăng xuất các thiết bị khác</button></div>
+    <div id="sessions" class="session-list"><p class="muted">Đang tải…</p></div>
+  </section>
+  <section>
+    <div class="section-head"><div><h2>Dữ liệu tài khoản</h2><p>Tải bản JSON chứa thông tin tài khoản và các workspace bạn đang tham gia.</p></div><button id="export-account" class="secondary">Tải dữ liệu</button></div>
+  </section>
+  <section class="danger-zone">
+    <div class="section-head"><div><h2>Xóa tài khoản</h2><p>Hành động này không thể hoàn tác. Bạn phải chuyển quyền nếu đang là chủ sở hữu duy nhất của một shop.</p></div></div>
+    <form id="delete-form" class="form-grid">
+      <label>Mật khẩu hiện tại<input name="password" type="password" autocomplete="current-password" required maxlength="200"></label>
+      <label>Gõ DELETE để xác nhận<input name="confirmation" required pattern="DELETE" autocomplete="off"></label>
+      <button type="submit" class="danger">Xóa vĩnh viễn tài khoản</button>
+    </form>
+  </section>
+</main>
+<script src="/static/account.js?v=1.5.0" defer></script>
+</body>
+</html>
